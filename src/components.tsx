@@ -1,5 +1,6 @@
 import { useState, type ReactNode, type InputHTMLAttributes } from 'react'
 import type { TournamentStatus, RegistrationStatus, Tournament } from './types'
+import { PHONE_CODES, splitPhone, joinPhone } from './account-rules'
 
 /* ─────────────────────────── Icons ─────────────────────────── */
 
@@ -391,6 +392,63 @@ export function PasswordInput({ label, error, hint, onCanvas, ...props }: Passwo
         >
           <IconEye show={show} />
         </button>
+      </div>
+      {error && <FieldError message={error} />}
+      {hint && !error && <p className="text-xs text-gray-400">{hint}</p>}
+    </div>
+  )
+}
+
+/* ─────────────────────────── Phone with country code ─────────────────────────── */
+
+interface PhoneInputProps {
+  label: string
+  /** The whole number with its code, e.g. "+1 416 555 0144" */
+  value: string
+  onChange: (v: string) => void
+  error?: string
+  hint?: string
+  placeholder?: string
+  /** Picks between countries that share a code (+1: Canada / United States), e.g. the golfer's country */
+  preferCountry?: string
+  onCanvas?: boolean
+  autoComplete?: string
+}
+
+/** A country-code dropdown (Canada by default) next to the number */
+export function PhoneInput({ label, value, onChange, error, hint, placeholder = '416 555 0000', preferCountry, onCanvas, autoComplete }: PhoneInputProps) {
+  const [country, setCountry] = useState(() => splitPhone(value, preferCountry).country)
+  const number = splitPhone(value, country).number
+  const code = PHONE_CODES.find(c => c.country === country) ?? PHONE_CODES[0]
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-[13px] font-semibold text-gray-600 font-display">{label}</label>
+      <div className="flex gap-2">
+        <div className="relative w-[104px] flex-shrink-0">
+          <div className={`${fieldClass(!!error, onCanvas)} flex items-center gap-1.5 px-3 pointer-events-none`} aria-hidden>
+            <span className="text-[18px] leading-none">{code.flag}</span>
+            <span className="text-[14px] font-semibold text-ink">{code.dial}</span>
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="ml-auto"><path d="M4 6l4 4 4-4" stroke="#6b7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </div>
+          <select
+            aria-label={`${label} country code`}
+            value={country}
+            onChange={e => { setCountry(e.target.value); onChange(joinPhone(e.target.value, number)) }}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+          >
+            {PHONE_CODES.map(c => <option key={c.country} value={c.country}>{c.flag} {c.country} ({c.dial})</option>)}
+          </select>
+        </div>
+        <input
+          type="tel"
+          inputMode="tel"
+          aria-label={label}
+          placeholder={placeholder}
+          autoComplete={autoComplete}
+          value={number}
+          onChange={e => onChange(joinPhone(country, e.target.value))}
+          className={`${fieldClass(!!error, onCanvas)} flex-1 min-w-0`}
+        />
       </div>
       {error && <FieldError message={error} />}
       {hint && !error && <p className="text-xs text-gray-400">{hint}</p>}
@@ -882,12 +940,14 @@ export function ErrorState({ title = 'Something went wrong', message, onRetry }:
 
 interface AvatarProps {
   initials: string
+  /** The golfer's picture; initials show without one */
+  photo?: string
   size?: 'sm' | 'md' | 'lg' | 'xl'
   /** Adds a lime ring, used on dark headers */
   ring?: boolean
 }
 
-export function Avatar({ initials, size = 'md', ring }: AvatarProps) {
+export function Avatar({ initials, photo, size = 'md', ring }: AvatarProps) {
   const sizes = {
     sm: 'w-9 h-9 text-sm',
     md: 'w-11 h-11 text-[15px]',
@@ -901,7 +961,47 @@ export function Avatar({ initials, size = 'md', ring }: AvatarProps) {
       }`}
       style={{ background: 'linear-gradient(135deg, #dcf58a 0%, #a9d334 100%)' }}
     >
-      {initials}
+      {photo ? <img src={photo} alt="Profile picture" className="w-full h-full rounded-full object-cover" /> : initials}
+    </div>
+  )
+}
+
+/** Lets the golfer take or choose a profile picture; returns it as a data URL (the real app uploads it) */
+export function ProfilePhotoPicker({ initials, photo, onChange }: { initials: string; photo?: string; onChange: (photo?: string) => void }) {
+  function pick(file?: File) {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      // Shrink to 256 px so the prototype can keep it in memory cheaply.
+      const img = new Image()
+      img.onload = () => {
+        const size = 256
+        const canvas = document.createElement('canvas')
+        canvas.width = canvas.height = size
+        const side = Math.min(img.width, img.height)
+        canvas.getContext('2d')?.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, size, size)
+        onChange(canvas.toDataURL('image/jpeg', 0.85))
+      }
+      img.src = String(reader.result)
+    }
+    reader.readAsDataURL(file)
+  }
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <label className="relative cursor-pointer active:scale-[0.97] transition-transform" aria-label="Change profile picture">
+        <Avatar initials={initials} photo={photo} size="xl" />
+        <span className="absolute -right-0.5 -bottom-0.5 w-8 h-8 rounded-full bg-ink ring-4 ring-canvas flex items-center justify-center" aria-hidden>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 8h3l2-3h6l2 3h3v11H4z" stroke="#c8ec5a" strokeWidth="1.8" strokeLinejoin="round"/><circle cx="12" cy="13" r="3.5" stroke="#c8ec5a" strokeWidth="1.8"/></svg>
+        </span>
+        <input type="file" accept="image/*" className="sr-only" onChange={e => { pick(e.target.files?.[0]); e.target.value = '' }} />
+      </label>
+      <div className="flex gap-3">
+        <label className="text-[13px] font-bold font-display text-ink cursor-pointer">
+          {photo ? 'Change photo' : 'Add a photo'}
+          <input type="file" accept="image/*" className="sr-only" onChange={e => { pick(e.target.files?.[0]); e.target.value = '' }} />
+        </label>
+        {photo && <button type="button" onClick={() => onChange(undefined)} className="text-[13px] font-semibold text-rose-600">Remove</button>}
+      </div>
     </div>
   )
 }

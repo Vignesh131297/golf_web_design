@@ -1,4 +1,4 @@
-import { handicapText, headlineStat } from '../account-rules'
+import { handicapText, headlineStat, gloveText } from '../account-rules'
 import type { ReactNode } from 'react'
 import { Avatar, Button } from '../components'
 import { MOCK_PROFILE } from '../data'
@@ -64,7 +64,7 @@ export default function Profile() {
             style={{ background: 'radial-gradient(circle, rgba(200,236,90,0.22) 0%, rgba(200,236,90,0) 70%)' }}
           />
           <div className="relative">
-            <Avatar initials={p.avatarInitials} size="xl" ring />
+            <Avatar initials={p.avatarInitials} photo={p.photoUrl} size="xl" ring />
             <h2 className="font-display font-extrabold text-white text-[26px] tracking-tight mt-5">{fullName}</h2>
             <p className="text-white/55 text-sm">{p.email}</p>
             <p className="text-white/55 text-sm mt-0.5">
@@ -131,6 +131,7 @@ export default function Profile() {
             <Row label="Preferred contact" value={p.preferredContact ?? 'Email'} />
             <Row label="Dietary" value={[...p.dietary, p.dietaryNote].filter(Boolean).join(', ') || 'None'} />
             {p.shirtSize && <Row label="Shirt size" value={p.shirtSize} />}
+            {p.gloveSize || p.gloveHand ? <Row label="Glove" value={gloveText(p.gloveSize, p.gloveHand)} /> : null}
             <Row label="Tournaments played" value={String(p.tournamentsPlayed)} />
             <Row label={headlineStat(p).label} value={headlineStat(p).value} />
           </Group>

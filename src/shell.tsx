@@ -89,7 +89,7 @@ function Sidebar({ route }: { route: Route }) {
 
       {/* User */}
       <div className="mt-4 flex items-center gap-3 rounded-full bg-white/[0.06] p-1.5 pr-2">
-        <Avatar initials={p.avatarInitials} size="sm" />
+        <Avatar initials={p.avatarInitials} photo={p.photoUrl} size="sm" />
         <div className="flex-1 min-w-0">
           <p className="text-white text-[13px] font-bold font-display truncate">{p.firstName} {p.lastName}</p>
           <p className="text-white/45 text-[11px] truncate">HCP {p.handicapIndex.toFixed(1)}</p>
@@ -115,7 +115,7 @@ function TopBar({ route }: { route: Route }) {
     <header className="lg:hidden sticky top-0 z-30 bg-canvas/90 backdrop-blur border-b border-black/[0.05]">
       <div className="flex items-center justify-between px-4 sm:px-6 h-16">
         <Wordmark />
-        <a href="#/profile" aria-label="Profile"><Avatar initials={MOCK_PROFILE.avatarInitials} size="sm" /></a>
+        <a href="#/profile" aria-label="Profile"><Avatar initials={MOCK_PROFILE.avatarInitials} photo={MOCK_PROFILE.photoUrl} size="sm" /></a>
       </div>
       <nav className="flex gap-1.5 px-4 sm:px-6 pb-3" aria-label="Main">
         {NAV.map(({ label, href, match }) => {

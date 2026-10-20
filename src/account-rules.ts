@@ -38,15 +38,74 @@ export function nameError(v: string, which: 'first' | 'last') {
 }
 
 export const phoneError = (v: string) => (v.replace(/\D/g, '').length < 7 ? 'Enter a valid phone number' : null)
+
+/* ───────── Phone country codes ───────── */
+
+/** Calling codes for the phone pickers. Canada is the default (client decision); golfers elsewhere pick theirs. */
+export const PHONE_CODES = [
+  { country: 'Canada', flag: '🇨🇦', dial: '+1' },
+  { country: 'United States', flag: '🇺🇸', dial: '+1' },
+  { country: 'United Kingdom', flag: '🇬🇧', dial: '+44' },
+  { country: 'Ireland', flag: '🇮🇪', dial: '+353' },
+  { country: 'Australia', flag: '🇦🇺', dial: '+61' },
+  { country: 'New Zealand', flag: '🇳🇿', dial: '+64' },
+  { country: 'South Africa', flag: '🇿🇦', dial: '+27' },
+  { country: 'Spain', flag: '🇪🇸', dial: '+34' },
+  { country: 'Portugal', flag: '🇵🇹', dial: '+351' },
+  { country: 'Japan', flag: '🇯🇵', dial: '+81' },
+  { country: 'India', flag: '🇮🇳', dial: '+91' },
+]
+export const DEFAULT_PHONE_COUNTRY = 'Canada'
+
+/**
+ * "+1 (416) 555-0144" → { country: 'Canada', number: '(416) 555-0144' }.
+ * +1 is shared by Canada and the US: [prefer] (e.g. the golfer's country) decides, otherwise Canada.
+ */
+export function splitPhone(full: string, prefer?: string): { country: string; number: string } {
+  const s = full.trim()
+  const known = (c?: string) => (c && PHONE_CODES.some(x => x.country === c) ? c : DEFAULT_PHONE_COUNTRY)
+  if (!s.startsWith('+')) return { country: known(prefer), number: s }
+  const digits = '+' + s.slice(1).replace(/\D/g, '')
+  const matches = PHONE_CODES.filter(c => digits.startsWith(c.dial))
+  if (!matches.length) return { country: known(prefer), number: s }
+  const longest = Math.max(...matches.map(c => c.dial.length))
+  const best = matches.filter(c => c.dial.length === longest)
+  const pick = best.find(c => c.country === prefer) ?? best.find(c => c.country === DEFAULT_PHONE_COUNTRY) ?? best[0]
+  // Drop the "+" and the code's digits, then any separator after them.
+  let rest = s.slice(1)
+  for (const ch of pick.dial.slice(1)) rest = rest.replace(/^[\s-]*/, '').replace(ch, '')
+  return { country: pick.country, number: rest.replace(/^[\s.-]+/, '') }
+}
+
+/** The number with its country's code, e.g. "+1 416 555 0144" ('' when no number) */
+export function joinPhone(country: string, number: string) {
+  const n = number.trim()
+  if (!n || n.startsWith('+')) return n
+  const code = PHONE_CODES.find(c => c.country === country) ?? PHONE_CODES[0]
+  return `${code.dial} ${n}`
+}
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 /* ───────── Golfer profile ───────── */
 
 export const GENDERS = ['Male', 'Female', 'Non-binary', 'Prefer not to say']
 export const ISSUING_BODIES = ['Golf Canada', 'USGA (GHIN)', 'England Golf', 'Golf Australia', 'Golf Ireland', 'Scottish Golf', 'Wales Golf', 'Other']
+/** Golf Canada (WHS) is the official body (client T-08), so it is chosen by default */
+export const DEFAULT_ISSUING_BODY = 'Golf Canada'
 export const RELATIONSHIPS = ['Spouse / partner', 'Parent', 'Child', 'Sibling', 'Friend', 'Other']
 export const CONTACT_METHODS = ['Email', 'SMS / Text', 'Phone call'] as const
 export const DIETARY = ['None', 'Vegetarian', 'Vegan', 'Gluten-free', 'Dairy-free', 'Nut allergy', 'Halal', 'Kosher']
+/* Player pack */
+export const SHIRT_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL']
+/** Golf glove sizes; ML is medium-large */
+export const GLOVE_SIZES = ['S', 'M', 'ML', 'L', 'XL', 'XXL']
+/** Which hand the glove is for. Right-handed golfers usually wear a left-hand glove. */
+export const GLOVE_HANDS = [
+  { value: 'LH', label: 'Left hand (LH)' },
+  { value: 'RH', label: 'Right hand (RH)' },
+]
+export const gloveText = (size?: string, hand?: string) =>
+  [size, GLOVE_HANDS.find(h => h.value === hand)?.label].filter(Boolean).join(' · ')
 export const TEE_OPTIONS = [
   { value: 'Black', swatch: '#111827' },
   { value: 'Blue', swatch: '#2563eb' },
@@ -82,13 +141,16 @@ export interface GolferDraft {
   contact: '' | (typeof CONTACT_METHODS)[number]
   dietary: string[]
   dietaryNote: string
+  shirt: string
+  glove: string
+  gloveHand: '' | 'LH' | 'RH'
 }
 
 export const emptyGolferDraft = (): GolferDraft => ({
   dob: '', gender: '', ratingsGender: '', street: '', city: '', region: '', postalCode: '', country: 'Canada',
   ecName: '', ecPhone: '', ecRelationship: '',
-  hasHandicap: '', handicap: '', body: '', memberNo: '', homeClub: '', membership: 'Guest', tee: '',
-  contact: 'Email', dietary: [], dietaryNote: '',
+  hasHandicap: '', handicap: '', body: DEFAULT_ISSUING_BODY, memberNo: '', homeClub: '', membership: 'Guest', tee: '',
+  contact: 'Email', dietary: [], dietaryNote: '', shirt: '', glove: '', gloveHand: '',
 })
 
 export function ageOn(dob: string, today = new Date()) {
@@ -186,6 +248,7 @@ export function toNewAccount(
     homeClub: d.homeClub.trim(), preferredTee: d.tee, membership: d.membership,
     preferredContact: d.contact || 'Email',
     dietary: d.dietary, dietaryNote: d.dietaryNote.trim() || undefined,
+    shirtSize: d.shirt || undefined, gloveSize: d.glove || undefined, gloveHand: d.gloveHand || undefined,
     marketingOptIn: !!basics.marketingOptIn, emailVerified,
   }
 }
@@ -201,10 +264,11 @@ export function draftFromProfile(p: GolferProfile): GolferDraft {
     ecName: p.emergencyContactName, ecPhone: p.emergencyContactPhone, ecRelationship: p.emergencyContactRelationship ?? '',
     hasHandicap: p.hasHandicap === false ? 'not-yet' : 'yes',
     handicap: p.hasHandicap === false ? '' : formatHandicap(p.handicapIndex),
-    body: ISSUING_BODIES.includes(p.handicapBody) ? p.handicapBody : p.handicapBody ? 'Other' : '',
+    body: ISSUING_BODIES.includes(p.handicapBody) ? p.handicapBody : p.handicapBody ? 'Other' : DEFAULT_ISSUING_BODY,
     memberNo: p.handicapNumber, homeClub: p.homeClub, membership: p.membership, tee: p.preferredTee,
     contact: (CONTACT_METHODS as readonly string[]).includes(p.preferredContact ?? '') ? p.preferredContact as GolferDraft['contact'] : 'Email',
     dietary: p.dietary.filter(x => DIETARY.includes(x)), dietaryNote: p.dietaryNote ?? p.dietary.filter(x => !DIETARY.includes(x)).join(', '),
+    shirt: p.shirtSize ?? '', glove: p.gloveSize ?? '', gloveHand: p.gloveHand ?? '',
   }
 }
 
@@ -237,6 +301,7 @@ export function profilePatch(who: Identity, d: GolferDraft, prev: GolferProfile)
     handicapUpdated: indexChanged ? new Date().toISOString().slice(0, 10) : prev.handicapUpdated,
     homeClub: a.homeClub, preferredTee: a.preferredTee, membership: a.membership,
     preferredContact: a.preferredContact, dietary: a.dietary, dietaryNote: a.dietaryNote,
+    shirtSize: a.shirtSize ?? '', gloveSize: a.gloveSize, gloveHand: a.gloveHand,
     emailVerified: emailChanged ? false : prev.emailVerified,
   }
 }

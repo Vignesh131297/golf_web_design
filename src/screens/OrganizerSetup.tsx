@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { Button, Input, SelectField, ChoiceChips } from '../components'
+import { Button, Input, SelectField, ChoiceChips, PhoneInput } from '../components'
 import { Wordmark } from '../shell'
 import { useApp } from '../app-context'
 import { navigate } from '../router'
@@ -235,7 +235,7 @@ export default function OrganizerSetup() {
               <Section id="org-contact" title="Public contact" hint="Shown to golfers on your tournaments">
                 <div className="grid sm:grid-cols-2 gap-5">
                   <Input label="Contact email *" type="email" value={email} onChange={e => field(setEmail, 'email')(e.target.value)} error={errors.email} />
-                  <Input label="Contact phone *" type="tel" value={phone} onChange={e => field(setPhone, 'phone')(e.target.value)} error={errors.phone} />
+                  <PhoneInput label="Contact phone *" value={phone} onChange={v => field(setPhone, 'phone')(v)} error={errors.phone} />
                 </div>
                 <Input label="Website (optional)" placeholder="yourclub.com" value={website} onChange={e => field(setWebsite, 'website')(e.target.value)} error={errors.website} />
               </Section>

@@ -319,6 +319,7 @@ export function finalizeCourse(c: Course, lifecycle: Course['lifecycle'], previo
     slope: scorecardTee?.menSlope ?? scorecardTee?.womenSlope ?? 0,
     phone: c.phone?.trim(), email: c.email?.trim(), website: c.website?.trim(), bookingUrl: c.bookingUrl?.trim(),
     dressCode: c.dressCode?.trim(), statusNote: c.status === 'open' ? '' : c.statusNote?.trim(),
+    holeImageSource: c.holeImageSource?.trim() || undefined,
     timeZone: c.timeZone || timeZoneForCourse(c),
     lifecycle, version, effectiveFrom, history,
   }

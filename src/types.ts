@@ -228,6 +228,8 @@ export interface HoleData {
   name?: string
   notes?: string
   map?: HoleMap
+  /** The course's own picture of the hole (from its website or scorecard); the drawn layout is used without it */
+  imageUrl?: string
 }
 
 /**
@@ -306,6 +308,10 @@ export interface Course {
   designer: string
   tournamentId?: string
   holeData: HoleData[]
+  /** The club's own scorecard as an image */
+  scorecardImageUrl?: string
+  /** Where the hole pictures come from, e.g. "Augusta Pines Golf Club scorecard" */
+  holeImageSource?: string
   /** Organisation that added it; undefined = platform-managed course */
   organizerId?: string
 
@@ -360,6 +366,11 @@ export interface GolferProfile {
   preferredTee: string
   dietary: string[]
   shirtSize: string
+  gloveSize?: string
+  /** Which hand the glove is for */
+  gloveHand?: 'LH' | 'RH'
+  /** Profile picture (a data URL in the prototype; an uploaded image URL in the real app) */
+  photoUrl?: string
   membership: 'Member' | 'Guest'
   /* ── Registration (Docs/REGISTER GOLFER.txt) ── */
   /** Non-binary / prefer not to say: which tee ratings to use for course handicap */
@@ -408,6 +419,9 @@ export interface NewAccount {
   preferredContact: string
   dietary: string[]
   dietaryNote?: string
+  shirtSize?: string
+  gloveSize?: string
+  gloveHand?: 'LH' | 'RH'
   marketingOptIn?: boolean
   emailVerified: boolean
 }

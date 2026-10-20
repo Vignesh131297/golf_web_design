@@ -9,7 +9,7 @@ import { TEE_COLORS, formatDay, teeSwatch, teeTotal } from '../golf'
 import { BackLink } from '../screens/TournamentDetails'
 import { NoAccess } from './AdminShell'
 import { canChangeCourse } from './access'
-import { Textarea, Toggle, AddRowButton, RemoveRowButton, PhotoPicker } from './forms'
+import { Textarea, Toggle, AddRowButton, RemoveRowButton, PhotoPicker, ImageUpload } from './forms'
 import { useConfirmDeleteCourse } from './ManageCourses'
 import {
   StepHeader, SectionRail, SectionCard, FieldGroup, OptionCards, Segmented, Callout, ValidationPanel, SummaryCard,
@@ -444,9 +444,13 @@ function Scorecard({ c, set, e, scorecardLocked }: SectionProps) {
                     return (
                       <HoleRow key={h.hole} open={open === i} colSpan={4 + (differ ? 2 : 0) + tees.length}
                         detail={
-                          <div className="grid md:grid-cols-[200px_1fr] gap-3 py-2">
-                            <Input label="Hole name" placeholder="Optional, e.g. Pine Hollow" value={h.name ?? ''} onChange={x => setHole(i, { name: x.target.value })} />
-                            <Input label="Notes for golfers" placeholder="How the hole plays, where to miss" value={h.notes ?? ''} onChange={x => setHole(i, { notes: x.target.value })} />
+                          <div className="space-y-3 py-2">
+                            <div className="grid md:grid-cols-[200px_1fr] gap-3">
+                              <Input label="Hole name" placeholder="Optional, e.g. Pine Hollow" value={h.name ?? ''} onChange={x => setHole(i, { name: x.target.value })} />
+                              <Input label="Notes for golfers" placeholder="How the hole plays, where to miss" value={h.notes ?? ''} onChange={x => setHole(i, { notes: x.target.value })} />
+                            </div>
+                            <ImageUpload label={`Hole ${h.hole} picture`} value={h.imageUrl} onChange={v => setHole(i, { imageUrl: v })}
+                              hint="From the club's website or printed scorecard. Golfers see it in the Hole guide; without it they see a sketch." />
                           </div>
                         }>
                         <td className="px-1 font-display font-extrabold text-ink">{h.hole}</td>
@@ -459,8 +463,8 @@ function Scorecard({ c, set, e, scorecardLocked }: SectionProps) {
                         ))}
                         <td className="text-right">
                           <button type="button" onClick={() => setOpen(open === i ? null : i)} aria-expanded={open === i}
-                            className={`h-8 px-3 rounded-full text-[11px] font-bold font-display ${h.name || h.notes ? 'bg-lime-300/50 text-pine-800' : 'bg-canvas text-gray-500'} hover:text-ink`}>
-                            {h.name || h.notes ? 'Notes ✓' : 'Notes'}
+                            className={`h-8 px-3 rounded-full text-[11px] font-bold font-display ${h.name || h.notes || h.imageUrl ? 'bg-lime-300/50 text-pine-800' : 'bg-canvas text-gray-500'} hover:text-ink`}>
+                            {h.name || h.notes || h.imageUrl ? 'Details ✓' : 'Details'}
                           </button>
                         </td>
                       </HoleRow>
@@ -489,6 +493,16 @@ function Scorecard({ c, set, e, scorecardLocked }: SectionProps) {
         </div>
       </fieldset>
       <FieldError error={e.scorecard} />
+      <div className="rounded-2xl bg-canvas/60 p-4 space-y-4">
+        <div>
+          <p className="text-[14px] font-bold font-display text-ink">Club scorecard & hole pictures</p>
+          <p className="text-[12px] text-gray-500 mt-0.5">Golfers see the club's own pictures in the Hole guide. Add a picture per hole with “Details”. Use images from the club's website or printed scorecard, with the club's permission.</p>
+        </div>
+        <ImageUpload label="Club scorecard" value={c.scorecardImageUrl} onChange={v => set({ scorecardImageUrl: v })}
+          hint="Golfers can open it from the course page" />
+        <Input label="Where the hole pictures come from" placeholder="e.g. Augusta Pines Golf Club scorecard" value={c.holeImageSource ?? ''}
+          onChange={x => set({ holeImageSource: x.target.value })} hint="Shown under each picture" />
+      </div>
       {advice.length > 0 && (
         <Callout tone="warning">
           <b>Stroke index guidance (WHS Appendix E)</b> — not required, but recommended:

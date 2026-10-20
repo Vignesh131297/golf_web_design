@@ -92,7 +92,21 @@ function HoleGuide({ course }: { course: Course }) {
         ))}
       </div>
       <div className="grid md:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] gap-5 mt-3 items-start">
-        <HoleMapView map={map} size="md" ariaLabel={`Hole ${hole.hole} layout`} />
+        {/* The club's own picture of the hole (from its website or scorecard); a sketch without one */}
+        <div>
+          {hole.imageUrl ? (
+            <a href={hole.imageUrl} target="_blank" rel="noreferrer" className="block rounded-3xl overflow-hidden bg-canvas">
+              <img src={hole.imageUrl} alt={`Hole ${hole.hole} from ${course.name}`} className="w-full max-h-[520px] object-contain" />
+            </a>
+          ) : (
+            <HoleMapView map={map} size="md" ariaLabel={`Hole ${hole.hole} layout`} />
+          )}
+          <p className="text-[12px] text-gray-400 mt-2">
+            {hole.imageUrl
+              ? `Image: ${course.holeImageSource ?? `${course.name} scorecard`}`
+              : "Sketch. The club's own picture of this hole shows here once it's added."}
+          </p>
+        </div>
         <div>
           <p className="font-display font-extrabold text-ink text-[22px] tracking-tight">Hole {hole.hole}{hole.name ? ` · ${hole.name}` : ''}</p>
           <p className="text-[14px] text-gray-500">Par {hole.par}{hole.parWomen && hole.parWomen !== hole.par ? ` (women ${hole.parWomen})` : ''} · Stroke index {hole.handicap}</p>
@@ -111,6 +125,7 @@ function HoleGuide({ course }: { course: Course }) {
 
 export default function CourseDetails({ id }: { id: string }) {
   const loading = useFakeLoad(600)
+  const [nine, setNine] = useState<'front' | 'back' | 'all'>('all')
   // Draft courses are only visible in the admin console
   const found = getCourse(id)
   const course = found?.lifecycle === 'draft' ? undefined : found
@@ -195,11 +210,25 @@ export default function CourseDetails({ id }: { id: string }) {
           </section>
 
           <section className="bg-white rounded-[28px] shadow-card p-6 lg:p-7">
-            <h2 className="font-display font-bold text-ink text-[19px] tracking-tight mb-4">Scorecard</h2>
-            <div className="space-y-3">
-              <NineTable label="Front 9" holes={front} totalLabel="OUT" unit={course.distanceUnit === 'metres' ? 'Metres' : 'Yards'} />
-              {back.length > 0 && <NineTable label="Back 9" holes={back} totalLabel="IN" unit={course.distanceUnit === 'metres' ? 'Metres' : 'Yards'} />}
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="font-display font-bold text-ink text-[19px] tracking-tight">Scorecard</h2>
+              {back.length > 0 && (
+                <div className="flex bg-canvas rounded-full p-1">
+                  {([['front', 'Front 9'], ['back', 'Back 9'], ['all', `All ${course.holes}`]] as const).map(([value, label]) => (
+                    <button key={value} type="button" aria-pressed={nine === value} onClick={() => setNine(value)}
+                      className={`h-8 px-3.5 rounded-full text-[12px] font-bold font-display transition-all ${nine === value ? 'bg-ink text-white' : 'text-gray-500 hover:text-ink'}`}>{label}</button>
+                  ))}
+                </div>
+              )}
             </div>
+            <div className="space-y-3">
+              {(nine !== 'back' || !back.length) && <NineTable label="Front 9" holes={front} totalLabel="OUT" unit={course.distanceUnit === 'metres' ? 'Metres' : 'Yards'} />}
+              {back.length > 0 && nine !== 'front' && <NineTable label="Back 9" holes={back} totalLabel="IN" unit={course.distanceUnit === 'metres' ? 'Metres' : 'Yards'} />}
+            </div>
+            {course.scorecardImageUrl && (
+              <a href={course.scorecardImageUrl} target="_blank" rel="noreferrer"
+                className="mt-4 inline-flex items-center gap-1.5 text-[14px] font-bold font-display text-ink hover:underline">View the club's scorecard ›</a>
+            )}
           </section>
 
           <TeesTable course={course} />

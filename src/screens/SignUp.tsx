@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Button, Input, PasswordInput } from '../components'
+import { Button, Input, PasswordInput, PhoneInput } from '../components'
 import { AuthLayout } from '../shell'
 import { useApp, type AccountType } from '../app-context'
 import { getUsers } from '../admin/access'
@@ -202,12 +202,10 @@ export default function SignUp() {
             autoComplete="email"
             onCanvas
           />
-          <Input
+          <PhoneInput
             label={isOrganizer ? 'Mobile phone' : 'Phone number'}
-            type="tel"
-            placeholder="+1 (404) 555-0000"
             value={phone}
-            onChange={e => { setPhone(e.target.value); clear('phone') }}
+            onChange={v => { setPhone(v); clear('phone') }}
             error={errors.phone}
             autoComplete="tel"
             onCanvas
