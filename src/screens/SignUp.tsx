@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Button, Input, PasswordInput, PhoneInput } from '../components'
 import { AuthLayout } from '../shell'
 import { useApp, type AccountType } from '../app-context'
-import { getUsers } from '../admin/access'
+import { accountExists } from '../ops'
 import { isBlockedPassword, nameError } from '../account-rules'
 
 type Errors = Partial<Record<'firstName' | 'lastName' | 'email' | 'phone' | 'password' | 'confirm' | 'terms', string>>
@@ -117,9 +117,7 @@ export default function SignUp() {
     const le = nameError(lastName, 'last'); if (le) e.lastName = le
     if (!email.trim()) e.email = 'Email is required'
     else if (!EMAIL_RE.test(email.trim())) e.email = 'Enter a valid email address'
-    else if (isOrganizer && getUsers().some(u => u.email.toLowerCase() === email.trim().toLowerCase())) {
-      e.email = 'An account with this email already exists. Sign in instead.'
-    }
+    else if (accountExists(email)) e.email = 'An account with this email already exists. Sign in instead.'
     if (phone.replace(/\D/g, '').length < 7) e.phone = 'Enter a valid phone number'
     if (password.length < 8) e.password = 'Use at least 8 characters'
     else if (isBlockedPassword(password)) e.password = 'This password is too common — choose another'

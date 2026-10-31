@@ -1,6 +1,9 @@
 import { handicapText, headlineStat, gloveText } from '../account-rules'
 import type { ReactNode } from 'react'
-import { Avatar, Button } from '../components'
+import { Avatar, Button, VerifiedTick } from '../components'
+import { HandicapCheck, IdentityUpload, idStatus } from '../verification'
+import { activeCoupons } from '../rewards'
+import { CouponCard } from '../payments'
 import { MOCK_PROFILE } from '../data'
 import { PageHeader, useFakeLoad } from '../shell'
 import { useApp } from '../app-context'
@@ -25,7 +28,7 @@ function Group({ title, children }: { title: string; children: ReactNode }) {
 }
 
 export default function Profile() {
-  const { signOut, showToast, profileVersion } = useApp()
+  const { signOut, showToast, profileVersion, touchProfile } = useApp()
   void profileVersion
   const loading = useFakeLoad(600)
   const p = MOCK_PROFILE
@@ -65,7 +68,7 @@ export default function Profile() {
           />
           <div className="relative">
             <Avatar initials={p.avatarInitials} photo={p.photoUrl} size="xl" ring />
-            <h2 className="font-display font-extrabold text-white text-[26px] tracking-tight mt-5">{fullName}</h2>
+            <h2 className="font-display font-extrabold text-white text-[26px] tracking-tight mt-5 flex items-center gap-2">{fullName}{idStatus(p.idCheck) === 'verified' && <VerifiedTick kind="id" size={22} />}</h2>
             <p className="text-white/55 text-sm">{p.email}</p>
             <p className="text-white/55 text-sm mt-0.5">
               {memberYears > 0 ? `Member for ${memberYears} year${memberYears > 1 ? 's' : ''}` : 'New member'}
@@ -75,7 +78,7 @@ export default function Profile() {
             <div className="grid grid-cols-3 gap-2 mt-6">
               <div className="bg-lime-400 rounded-2xl p-3">
                 <p className="font-display font-extrabold text-ink text-[20px] leading-none tracking-tight">{handicapText(p)}</p>
-                <p className="text-pine-800 text-[11px] font-semibold mt-1.5">Handicap</p>
+                <p className="text-pine-800 text-[11px] font-semibold mt-1.5 flex items-center gap-1">Handicap{p.handicapVerified && <VerifiedTick kind="handicap" size={12} />}</p>
               </div>
               <div className="bg-white/[0.08] rounded-2xl p-3">
                 <p className="font-display font-extrabold text-white text-[20px] leading-none tracking-tight">{p.tournamentsPlayed}</p>
@@ -106,6 +109,34 @@ export default function Profile() {
 
         {/* Details */}
         <div className="grid md:grid-cols-2 gap-6 items-start">
+          <section className="md:col-span-2 bg-white rounded-[28px] shadow-card p-6">
+            <h2 className="font-display font-bold text-ink text-[17px] tracking-tight">Verification</h2>
+            <p className="text-[13px] text-gray-500 mt-0.5 mb-4">Verified ticks show next to your name and handicap in every tournament you enter.</p>
+            <div className="grid md:grid-cols-2 gap-4 items-start">
+              <IdentityUpload value={p.idCheck} onChange={v => { p.idCheck = v; touchProfile(); if (v?.status === 'checking') showToast('ID uploaded — checking it now', 'info'); else if (v?.status === 'verified') showToast('ID verified — you now have the blue tick') }} />
+              <div className="rounded-2xl bg-canvas p-4">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5"><VerifiedTick kind="handicap" size={22} /></span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-display font-bold text-ink text-[15px]">Verify your handicap</p>
+                    <p className="text-[13px] text-gray-500 mt-0.5 leading-relaxed mb-3">We confirm your Handicap Index with {p.handicapBody || 'Golf Canada'} so organisers can trust the divisions.</p>
+                    {p.hasHandicap === false
+                      ? <p className="text-[13px] text-gray-500">Add a Handicap Index first.</p>
+                      : <HandicapCheck profile={p} onVerified={() => { p.handicapVerified = true; touchProfile(); showToast(`Handicap verified with ${p.handicapBody || 'Golf Canada'}`) }} />}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {activeCoupons().length > 0 && (
+            <section className="md:col-span-2 bg-white rounded-[28px] shadow-card p-6">
+              <h2 className="font-display font-bold text-ink text-[17px] tracking-tight">Your rewards</h2>
+              <p className="text-[13px] text-gray-500 mt-0.5 mb-4">Every payment earns a discount at our golf shop.</p>
+              <div className="grid md:grid-cols-2 gap-4">{activeCoupons().map(c => <CouponCard key={c.code} coupon={c} />)}</div>
+            </section>
+          )}
+
           <Group title="Personal information">
             <Row label="Full name" value={fullName} />
             <Row label="Email" value={p.email} />
@@ -118,7 +149,7 @@ export default function Profile() {
           </Group>
 
           <Group title="Golfer information">
-            <Row label="Handicap index" value={p.hasHandicap === false ? 'Not yet' : `${handicapText(p)} (WHS)`} />
+            <Row label="Handicap index" value={p.hasHandicap === false ? 'Not yet' : `${handicapText(p)} (WHS)${p.handicapVerified ? ' · verified' : ''}`} />
             {p.handicapBody && <Row label="Issuing body" value={p.handicapBody} />}
             {p.handicapNumber && <Row label="Member number" value={p.handicapNumber} />}
             {p.homeClub && <Row label="Home club" value={p.homeClub} />}

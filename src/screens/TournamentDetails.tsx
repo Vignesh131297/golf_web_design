@@ -3,6 +3,7 @@ import type { Division, Tournament } from '../types'
 import {
   Button, StatusBadge, GlassChip, InfoTile, SpotsBar, EmptyState,
   IconCalendar, IconClock, IconCourse, IconUsers, IconCheckCircle,
+  VerifiedTick,
 } from '../components'
 import { getTournament, getCourse, MOCK_PROFILE } from '../data'
 import { ratingsGenderOf } from '../account-rules'
@@ -11,12 +12,13 @@ import { useApp } from '../app-context'
 import { navigate } from '../router'
 import { useFakeLoad } from '../shell'
 import { useDataVersion } from '../store'
-import { entriesFor, groupOf, myEntry, registerMe, registrantsFor, useLiveVersion, withdrawMe } from '../live'
+import { entriesFor, groupOf, myEntry, registerMe, registrantsFor, ticksFor, useLiveVersion, withdrawMe } from '../live'
 import {
   TIE_BREAK_OPTIONS, isoDate, isoLocalDateTime, formatClock, formatDateTime, formatDay, formatMoney, teeSwatch, teeTotal,
   divisionForGolfer, feeUnit, withTax,
 } from '../golf'
 import { PaymentSheet } from '../payments'
+import MoreTournaments from './MoreTournaments'
 
 export function BackLink({ label, onClick }: { label: string; onClick: () => void }) {
   return (
@@ -79,10 +81,10 @@ function WhosPlaying({ t, players, isRegistered }: { t: Tournament; players: num
                   {e.name.split(/\s+/).map(w => w[0]).slice(0, 2).join('')}
                 </span>
                 <span className="flex-1 min-w-0">
-                  <span className="block text-[14px] font-semibold text-ink truncate">{e.name}{e.isMe && <span className="ml-1.5 text-[11px] font-bold text-pine-700">You</span>}</span>
+                  <span className="flex items-center gap-1 text-[14px] font-semibold text-ink min-w-0"><span className="truncate">{e.name}</span>{ticksFor(e).id && <VerifiedTick kind="id" />}{e.isMe && <span className="ml-0.5 text-[11px] font-bold text-pine-700">You</span>}</span>
                   <span className="block text-[12px] text-gray-500 truncate">{division(e.divisionId)}</span>
                 </span>
-                <span className="text-[13px] font-semibold text-gray-600">{e.handicapIndex < 0 ? `+${Math.abs(e.handicapIndex).toFixed(1)}` : e.handicapIndex.toFixed(1)}</span>
+                <span className="flex items-center gap-1 text-[13px] font-semibold text-gray-600">{e.handicapIndex < 0 ? `+${Math.abs(e.handicapIndex).toFixed(1)}` : e.handicapIndex.toFixed(1)}{ticksFor(e).handicap && <VerifiedTick kind="handicap" size={13} />}</span>
               </li>
             ))}
           </ul>
@@ -385,7 +387,7 @@ export default function TournamentDetails({ id }: { id: string }) {
 
           {course && (
             <Card title="The course">
-              <a href={`#/courses/${course.id}`} className="group flex items-center gap-4 rounded-2xl bg-canvas p-3 hover:bg-gray-200/60 transition-colors">
+              <a href={`#/courses/${course.id}/${t.id}`} className="group flex items-center gap-4 rounded-2xl bg-canvas p-3 hover:bg-gray-200/60 transition-colors">
                 <img src={course.imageUrl} alt="" className="w-24 h-20 rounded-xl object-cover flex-shrink-0" />
                 <div className="flex-1 min-w-0">
                   <p className="font-display font-bold text-ink text-[16px] tracking-tight">{course.name}</p>
@@ -445,7 +447,7 @@ export default function TournamentDetails({ id }: { id: string }) {
           <div className="space-y-2.5">
             {primaryAction}
             {isLive && isRegistered && <Button variant="secondary" fullWidth onClick={() => navigate(`/tournaments/${t.id}/leaderboard`)}>Live leaderboard</Button>}
-            <Button variant="secondary" fullWidth onClick={() => navigate(`/courses/${t.courseId}`)}>
+            <Button variant="secondary" fullWidth onClick={() => navigate(`/courses/${t.courseId}/${t.id}`)}>
               <IconCourse /> View course
             </Button>
           </div>
@@ -458,6 +460,7 @@ export default function TournamentDetails({ id }: { id: string }) {
           </div>
         </aside>
       </div>
+      <div className="mt-8 max-w-[760px]"><MoreTournaments excludeId={t.id} /></div>
       {paying && myDivision && (
         <PaymentSheet title={`Enter ${t.name}`} currency={fees.currency} total={withTax(priceNow, fees)} onClose={() => setPaying(false)}
           lines={[

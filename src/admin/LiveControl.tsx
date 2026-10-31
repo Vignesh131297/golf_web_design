@@ -5,22 +5,24 @@ import { useApp } from '../app-context'
 import { navigate } from '../router'
 import { PageHeader } from '../shell'
 import { setTournamentStatus, upsertTournament, useDataVersion } from '../store'
-import { cardState, entriesFor, generateTeeSheet, groupsFor, simulateTick, useLiveVersion } from '../live'
+import { cardState, entriesFor, generateTeeSheet, groupsFor, roundStatus, simulateTick, useLiveVersion } from '../live'
 import { formatClock } from '../golf'
-import { incidentsFor, mismatches, paceFor, scoreChangesFor, slotStatus, staffRoleOf, useOpsVersion, type Actor } from '../ops'
+import { activityFor, currentRound, declaredWinners, incidentsFor, markerMissing, mismatches, paceFor, pendingRequests, recordPublish, signOffFor, slotStatus, staffRoleOf, useOpsVersion, type Actor } from '../ops'
 import {
-  FieldBoard, IncidentsBoard, PaceBoard, Panel, ScoreChangesLog, ScorecardsBoard, StaffSlotsBoard, StatRow,
+  ActivityLog, FieldBoard, IncidentsBoard, InterestBoard, LeaderboardBoard, OrganiserDecisions, PaceBoard, Panel, PlayControl, ReportsBoard, ScorecardsBoard, StaffSlotsBoard, StatRow,
+  SuspendedBanner, WinnersBoard, fmtTime,
 } from '../ops-ui'
 import { BackLink } from '../screens/TournamentDetails'
 import { NoAccess } from './AdminShell'
 import { scopedTournaments } from './access'
 
-type Tab = 'scorecards' | 'field' | 'pace' | 'incidents' | 'staff' | 'changes'
+type Tab = 'scorecards' | 'leaderboard' | 'results' | 'field' | 'pace' | 'incidents' | 'staff' | 'changes' | 'reports'
 
 /**
  * Tournament day for organisers and platform staff: build the tee sheet, manage the field, watch pace,
- * settle disputes, verify scorecards (corrections need a reason), run the marshal and official slots,
- * then publish results. Once published the tournament is closed and can't be reopened (client answer T-14).
+ * settle disputes, verify scorecards (corrections need a reason), run the marshal and official slots, follow the
+ * leaderboard, confirm the winners once the committee signs off, then publish results and download the reports.
+ * Once published the tournament is closed and can't be reopened (client answer T-14).
  */
 export function AdminTournamentLive({ id }: { id: string }) {
   useDataVersion()
@@ -28,9 +30,12 @@ export function AdminTournamentLive({ id }: { id: string }) {
   useOpsVersion()
   const { can, adminUser, consoleActor, showToast, showDialog } = useApp()
   const t = scopedTournaments(adminUser).find(x => x.id === id)
-  const [round, setRound] = useState(1)
+  const [round, setRound] = useState(() => { const x = scopedTournaments(adminUser).find(y => y.id === id); return x ? currentRound(x) : 1 })
   // Before tournament day the organiser is mostly managing registrations
-  const [tab, setTab] = useState<Tab>(() => (scopedTournaments(adminUser).find(x => x.id === id)?.status === 'in-progress' ? 'scorecards' : 'field'))
+  const [tab, setTab] = useState<Tab>(() => {
+    const status = scopedTournaments(adminUser).find(x => x.id === id)?.status
+    return status === 'in-progress' ? 'scorecards' : status === 'completed' ? 'results' : 'field'
+  })
 
   if (!can('tournaments.view')) return <NoAccess what="view tournaments" />
   if (!t) {
@@ -48,15 +53,19 @@ export function AdminTournamentLive({ id }: { id: string }) {
   const canRun = can('tournaments.status')
   const canScore = can('tournaments.status') || can('courses.scorecard')
   const live = t.status === 'in-progress'
-  const verified = registered.filter(e => cardState(t.id, e.id, round) === 'verified').length
-  const allVerified = registered.length > 0 && verified === registered.length
+  // Players an official marked WD, NS, DNF or DQ are out of the results and don't need a verified card
+  const inField = registered.filter(e => roundStatus(t.id, e.id, round) === 'playing')
+  const verified = inField.filter(e => cardState(t.id, e.id, round) === 'verified').length
+  const allVerified = inField.length > 0 && verified === inField.length
   const incidents = incidentsFor(t.id)
   const decisions = incidents.filter(i => i.status === 'committee').length
-  const differ = registered.filter(e => mismatches(t, e.id, round).length).length
+  const differ = registered.filter(e => mismatches(t, e.id, round).length || markerMissing(t, round, e.id)).length
   const pace = paceFor(t, round)
   const flagged = pace.groups.filter(g => g.status === 'behind' || g.status === 'out-of-position').length
   const staff = (t.officials ?? []).filter(o => staffRoleOf(o))
   const openSlots = staff.filter(o => slotStatus(t, o) === 'open').length
+  const signed = signOffFor(t.id, round)
+  const unsignedRounds = (t.rounds?.map(r => r.number) ?? [1]).filter(n => !signOffFor(t.id, n))
 
   function start() {
     if (!groups.length) generateTeeSheet(t!, round)
@@ -67,22 +76,26 @@ export function AdminTournamentLive({ id }: { id: string }) {
   function publish() {
     showDialog({
       title: 'Publish results and close the tournament?',
-      message: `${allVerified ? 'All cards are verified.' : `${registered.length - verified} card(s) aren't verified yet.`} Results become final and visible to golfers. A closed tournament can't be reopened; marshal and official logins stop working.`,
+      message: `${unsignedRounds.length ? `Not signed off by the committee yet: round ${unsignedRounds.join(', round ')}.` : 'The committee signed off every round.'} ${allVerified ? '' : `${inField.length - verified} card(s) in round ${round} aren't verified yet. `}${pendingRequests(t!.id).length ? `${pendingRequests(t!.id).length} request(s) from officials are still waiting for your decision. ` : ''}${declaredWinners(t!.id) ? 'Winners are confirmed. ' : 'Winners aren’t confirmed — the top of each list goes out. '}Results become final and visible to golfers. A closed tournament can't be reopened; marshal and official logins stop working.`,
       confirmLabel: 'Publish & close',
       onConfirm: () => {
+        recordPublish(t!, actor)
         upsertTournament({ ...(t as Tournament), status: 'completed', registrationStatus: 'closed', resultsPublished: true })
-        showToast('Results published — tournament closed')
+        showToast('Results published — golfers can see the results and winners')
       },
     })
   }
 
   const TABS: [Tab, string, number?][] = [
     ['scorecards', 'Scorecards', differ || undefined],
+    ['leaderboard', 'Leaderboard'],
+    ['results', 'Results & winners'],
     ['field', 'Field & registrations'],
     ['pace', 'Pace of play', flagged || undefined],
     ['incidents', 'Disputes & incidents', decisions || undefined],
     ['staff', 'Marshals & officials', openSlots || undefined],
-    ['changes', 'Score changes'],
+    ['changes', 'Change log'],
+    ['reports', 'Reports'],
   ]
 
   return (
@@ -95,7 +108,8 @@ export function AdminTournamentLive({ id }: { id: string }) {
           <>
             <StatusBadge status={t.status} size="md" />
             {canRun && !live && t.status !== 'completed' && t.status !== 'cancelled' && <Button onClick={start}>Start tournament</Button>}
-            {canRun && live && <Button variant="secondary" onClick={() => { simulateTick(t, round); showToast('Simulated the next hole for the field', 'info') }}>Simulate next hole</Button>}
+            {canRun && live && <PlayControl t={t} round={round} actor={actor} />}
+            {canRun && live && <Button variant="secondary" onClick={() => { simulateTick(t, currentRound(t)); showToast('Simulated the next hole for the field', 'info') }}>Simulate next hole</Button>}
             {canRun && live && <Button onClick={publish}>Publish results</Button>}
           </>
         }
@@ -108,9 +122,18 @@ export function AdminTournamentLive({ id }: { id: string }) {
         </div>
       )}
 
+      {live && <SuspendedBanner t={t} />}
+      {live && canRun && <OrganiserDecisions t={t} actor={actor} />}
+      {live && signed && (
+        <div className="mb-6 flex items-start gap-3 bg-emerald-50 text-emerald-900 rounded-2xl px-5 py-4 text-[14px] leading-relaxed">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 mt-2 flex-shrink-0" />
+          <p><span className="font-bold font-display">Round {round} signed off by {signed.by.name} at {fmtTime(signed.at)}.</span> Cards are locked. Publish the results when you’re ready.</p>
+        </div>
+      )}
+
       <StatRow items={[
         { label: 'Players', value: `${Math.max(t.players, registered.length)} / ${t.maxPlayers}`, tone: 'dark' },
-        { label: 'Cards verified', value: `${verified} / ${registered.length}` },
+        { label: 'Cards verified', value: `${verified} / ${inField.length}` },
         { label: 'Waiting for a decision', value: decisions, tone: decisions ? 'warn' : undefined },
         { label: 'Groups behind pace', value: flagged },
       ]} />
@@ -132,9 +155,13 @@ export function AdminTournamentLive({ id }: { id: string }) {
       </div>
 
       {tab === 'scorecards' && <ScorecardsBoard t={t} round={round} actor={actor} canManage={canScore} />}
+      {tab === 'leaderboard' && <LeaderboardBoard t={t} round={round} />}
+      {tab === 'results' && <WinnersBoard t={t} actor={actor} canEdit={canRun} />}
+      {tab === 'reports' && <ReportsBoard t={t} />}
       {tab === 'field' && (
         <div className="space-y-6">
           <FieldBoard t={t} round={round} />
+          <InterestBoard t={t} />
           <Panel title={`Tee sheet · round ${round}`}
             subtitle={`${t.teeSheet?.startType === 'shotgun' ? 'Shotgun start' : `Every ${t.teeSheet?.intervalMinutes} min`} · groups of ${t.teeSheet?.groupSize} by handicap · rearrange players below`}
             aside={canRun && t.status !== 'completed' && (
@@ -162,11 +189,11 @@ export function AdminTournamentLive({ id }: { id: string }) {
       )}
       {tab === 'pace' && <PaceBoard t={t} round={round} />}
       {tab === 'incidents' && <IncidentsBoard t={t} round={round} actor={actor} canAct={canScore} />}
-      {tab === 'staff' && <StaffSlotsBoard t={t} canEdit={can('tournaments.status') || can('tournaments.edit')} />}
+      {tab === 'staff' && <StaffSlotsBoard t={t} canEdit={can('tournaments.status') || can('tournaments.edit')} actor={actor} />}
       {tab === 'changes' && (
         <>
-          <ScoreChangesLog t={t} />
-          <p className="text-[12px] text-gray-500 mt-3">{scoreChangesFor(t.id).length} change(s). Players see the corrected score; the history is visible to organisers and officials.</p>
+          <ActivityLog t={t} />
+          <p className="text-[12px] text-gray-500 mt-3">{activityFor(t).length} entr{activityFor(t).length === 1 ? 'y' : 'ies'}. Players see the corrected score; the history is visible to organisers and officials.</p>
         </>
       )}
     </div>

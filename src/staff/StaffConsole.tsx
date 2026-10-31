@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { Route } from '../router'
 import { navigate } from '../router'
 import { useApp } from '../app-context'
@@ -9,11 +9,12 @@ import { useDataVersion } from '../store'
 import { cardState, entriesFor, useLiveVersion } from '../live'
 import { formatDay } from '../golf'
 import {
-  STAFF_ROLE_LABEL, assignmentFor, assignmentsFor, incidentsFor, mismatches, paceFor, scoreChangesFor, useOpsVersion,
+  STAFF_ROLE_LABEL, assignmentFor, assignmentsFor, incidentsFor, mismatches, paceFor, scoreChangesFor, sessionEnded, signOffFor, useOpsVersion,
   type Actor, type Assignment, type GroupPace, type StaffRole,
 } from '../ops'
 import {
-  IncidentForm, IncidentsBoard, PaceBoard, Panel, ScoreChangesLog, ScorecardsBoard, StatRow, TeeSheetBoard,
+  ActivityLog, CourseRulesBoard, IncidentForm, IncidentsBoard, OfficialToday, OverallBoard, PaceBoard, Panel, ResultsBoard, ScorecardsBoard, StatRow,
+  SuspendedBanner, TeeSheetBoard,
 } from '../ops-ui'
 import { IconLock } from '../admin/AdminShell'
 
@@ -32,8 +33,11 @@ const IconCard = () => <Svg><rect x="3.5" y="4" width="17" height="16" rx="2.5" 
 const IconHistory = () => <Svg><path d="M3.5 12a8.5 8.5 0 102.5-6" /><path d="M3 4v4h4M12 8v4l3 2" /></Svg>
 const IconSheet = () => <Svg><path d="M7 3.5h10M5 7.5h14M5 7.5v13h14v-13M9 12h6M9 16h4" /></Svg>
 const IconList = () => <Svg><path d="M8 6h12M8 12h12M8 18h12M4 6h.5M4 12h.5M4 18h.5" /></Svg>
+const IconToday = () => <Svg><rect x="3.5" y="5" width="17" height="15.5" rx="2.5" /><path d="M3.5 10h17M8 3v4M16 3v4M8 14h3" /></Svg>
+const IconTrophy = () => <Svg><path d="M8 4h8v5a4 4 0 01-8 0V4zM8 6H5a3 3 0 003 4M16 6h3a3 3 0 01-3 4M12 13v4M8.5 20.5h7M10 17h4" /></Svg>
+const IconFlag = () => <Svg><path d="M6 21V4M6 4h11l-2.5 4L17 12H6" /></Svg>
 
-export type StaffTab = 'pace' | 'incidents' | 'scorecards' | 'changes' | 'tee-sheet'
+export type StaffTab = 'today' | 'pace' | 'incidents' | 'scorecards' | 'results' | 'changes' | 'course' | 'tee-sheet'
 
 const TABS: Record<StaffRole, { tab: StaffTab; label: string; Icon: () => ReactNode }[]> = {
   marshal: [
@@ -42,21 +46,36 @@ const TABS: Record<StaffRole, { tab: StaffTab; label: string; Icon: () => ReactN
     { tab: 'tee-sheet', label: 'Tee sheet & contacts', Icon: IconSheet },
   ],
   official: [
+    { tab: 'today', label: 'Today', Icon: IconToday },
     { tab: 'scorecards', label: 'Scorecards', Icon: IconCard },
-    { tab: 'incidents', label: 'Disputes & incidents', Icon: IconAlert },
+    { tab: 'incidents', label: 'Disputes & rulings', Icon: IconAlert },
     { tab: 'pace', label: 'Pace of play', Icon: IconPace },
-    { tab: 'changes', label: 'Score changes', Icon: IconHistory },
+    { tab: 'results', label: 'Results & sign-off', Icon: IconTrophy },
+    { tab: 'changes', label: 'Change log', Icon: IconHistory },
+    { tab: 'course', label: 'Course & rules', Icon: IconFlag },
     { tab: 'tee-sheet', label: 'Tee sheet & contacts', Icon: IconSheet },
   ],
 }
 
-const defaultTab = (role: StaffRole): StaffTab => (role === 'marshal' ? 'pace' : 'scorecards')
+const defaultTab = (role: StaffRole): StaffTab => (role === 'marshal' ? 'pace' : 'today')
 
 /* ───────── Layout ───────── */
 
 export function StaffLayout({ route, children }: { route: Route; children: ReactNode }) {
   useDataVersion()
-  const { signOut, staffEmail, staffName, switchRole } = useApp()
+  useOpsVersion()
+  const { signOut, staffEmail, staffName, staffSince, switchRole, forceSignOut } = useApp()
+
+  // Taken off the tournament or password reset elsewhere: the session ends at once, with the reason (checked every 5 s too)
+  const ended = staffEmail && staffSince ? sessionEnded(staffEmail, staffSince) : undefined
+  useEffect(() => {
+    if (ended) { forceSignOut(ended); return }
+    const timer = setInterval(() => {
+      const why = staffEmail && staffSince ? sessionEnded(staffEmail, staffSince) : undefined
+      if (why) forceSignOut(why)
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [ended, staffEmail, staffSince, forceSignOut])
   const current = route.name === 'staff-event' ? assignmentFor(staffEmail ?? undefined, route.id) : undefined
   const tab = route.name === 'staff-event' ? (route.tab as StaffTab) || (current ? defaultTab(current.role) : 'pace') : undefined
   const all = assignmentsFor(staffEmail ?? undefined)
@@ -206,7 +225,9 @@ export function StaffEvent({ id, tab }: { id: string; tab?: string }) {
   const { staffEmail, staffName } = useApp()
   const [preset, setPreset] = useState<GroupPace | null>(null)
   const a = assignmentFor(staffEmail ?? undefined, id)
-  const round = 1
+  // Multi-round events: today's round is the first one not yet signed off
+  const rounds = a?.tournament.rounds?.map(r => r.number) ?? [1]
+  const [round, setRound] = useState(() => rounds.find(n => !signOffFor(id, n)) ?? rounds[rounds.length - 1])
 
   if (!a) return <Blocked title="Not one of your tournaments" body="Your login only opens tournaments you’re assigned to as a marshal or official." />
   if (a.window === 'ended') return <Blocked title="Your access has ended" body={`${a.tournament.name} has closed. Marshals and officials can’t open a tournament after it ends; the organiser keeps the results.`} />
@@ -228,7 +249,7 @@ export function StaffEvent({ id, tab }: { id: string; tab?: string }) {
       ]
     : [
         { label: 'Cards to verify', value: registered.filter(e => cardState(t.id, e.id, round) === 'submitted').length, tone: 'dark' as const },
-        { label: 'Marker mismatches', value: registered.filter(e => mismatches(t, e.id, round).length).length, tone: registered.some(e => mismatches(t, e.id, round).length) ? 'warn' as const : undefined },
+        { label: 'Score discrepancies', value: registered.filter(e => mismatches(t, e.id, round).length).length, tone: registered.some(e => mismatches(t, e.id, round).length) ? 'warn' as const : undefined },
         { label: 'Waiting for a decision', value: incidents.filter(i => i.status === 'committee').length },
         { label: 'Scores changed', value: scoreChangesFor(t.id).length },
       ]
@@ -236,19 +257,40 @@ export function StaffEvent({ id, tab }: { id: string; tab?: string }) {
   return (
     <div className="page-in">
       <PageHeader eyebrow={`${STAFF_ROLE_LABEL[a.role]} · ${t.venue} · round ${round}`} title={t.name}
-        actions={<StatusBadge status={t.status} size="md" />} />
+        actions={<>
+          {rounds.length > 1 && a.role === 'official' && (
+            <div className="flex gap-1 bg-white rounded-full p-1 shadow-card" role="group" aria-label="Round">
+              {(t.rounds ?? []).map(r => (
+                <button key={r.number} onClick={() => setRound(r.number)} aria-pressed={round === r.number}
+                  className={`h-9 px-3.5 rounded-full text-[13px] font-bold font-display ${round === r.number ? 'bg-ink text-white' : 'text-gray-600 hover:text-ink'}`}>
+                  Round {r.number}{signOffFor(t.id, r.number) ? ' ✓' : ''}
+                </button>
+              ))}
+            </div>
+          )}
+          <StatusBadge status={t.status} size="md" />
+        </>} />
       {a.window === 'upcoming' && (
         <div className="mb-6 flex items-start gap-3 bg-amber-50 text-amber-800 rounded-2xl px-5 py-4 text-[14px] leading-relaxed">
           <span className="w-2 h-2 rounded-full bg-amber-500 mt-2 flex-shrink-0" />
           <p><span className="font-bold font-display">Your console opens on {formatDay(t.startDate)}.</span> Until then you can see the tee sheet and who to call.</p>
         </div>
       )}
-      {a.window === 'live' && <StatRow items={stats} />}
+      {a.window === 'live' && <SuspendedBanner t={t} />}
+      {a.window === 'live' && (a.role === 'marshal' || active === 'today' || active === 'scorecards') && <StatRow items={stats} />}
 
+      {active === 'today' && a.role === 'official' && <OfficialToday t={t} round={round} actor={actor} onOpen={to => navigate(`/staff/${t.id}/${to}`)} />}
       {active === 'pace' && <PaceBoard t={t} round={round} onLog={a.role === 'marshal' ? setPreset : undefined} />}
       {active === 'incidents' && <IncidentsBoard t={t} round={round} actor={actor} />}
       {active === 'scorecards' && a.role === 'official' && <ScorecardsBoard t={t} round={round} actor={actor} canManage />}
-      {active === 'changes' && <ScoreChangesLog t={t} />}
+      {active === 'results' && a.role === 'official' && (
+        <div className="space-y-6">
+          <ResultsBoard key={round} t={t} round={round} actor={actor} />
+          <OverallBoard t={t} round={round} />
+        </div>
+      )}
+      {active === 'changes' && <ActivityLog t={t} />}
+      {active === 'course' && <CourseRulesBoard t={t} round={round} />}
       {active === 'tee-sheet' && <TeeSheetBoard t={t} round={round} />}
 
       {preset && (

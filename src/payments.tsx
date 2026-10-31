@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Button, Input } from './components'
 import { formatMoney } from './golf'
+import { couponExpiry, issueCoupon, type Coupon } from './rewards'
 import { Modal } from './ops-ui'
 
 /*
@@ -26,6 +27,7 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
   const [cvc, setCvc] = useState('')
   const [name, setName] = useState('')
   const [error, setError] = useState('')
+  const [coupon, setCoupon] = useState<Coupon | null>(null)
   const [state, setState] = useState<'idle' | 'paying' | 'declined'>('idle')
 
   function pay(e?: FormEvent) {
@@ -40,8 +42,21 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
     setTimeout(() => {
       if (digits(card) === '4000000000000002') return setState('declined')
       onPaid()
-      onClose()
+      // Every payment earns a Golaf.ca discount (client, 21 Oct call)
+      setCoupon(issueCoupon(title))
+      setState('idle')
     }, 1300)
+  }
+
+  if (coupon) {
+    return (
+      <Modal title="Payment complete" subtitle={`${formatMoney(total, currency)} paid — your receipt is on its way by email.`} onClose={onClose}
+        footer={<Button fullWidth onClick={onClose}>Done</Button>}>
+        <p className="text-[14px] text-ink font-semibold">Thanks for entering! Here’s a reward from our golf shop:</p>
+        <CouponCard coupon={coupon} />
+        <p className="text-[12px] text-gray-400">You’ll also find this code on your profile.</p>
+      </Modal>
+    )
   }
 
   return (
@@ -68,5 +83,24 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
       </form>
       <p className="text-[11px] text-gray-400 leading-relaxed">Prototype: no real payment is taken. Stripe test card 4242 4242 4242 4242 succeeds; 4000 0000 0000 0002 is declined.</p>
     </Modal>
+  )
+}
+
+/** The Golaf.ca reward a payment earns, shown right after paying and on the profile */
+export function CouponCard({ coupon }: { coupon: Coupon }) {
+  const [copied, setCopied] = useState(false)
+  async function copy() {
+    try { await navigator.clipboard.writeText(coupon.code); setCopied(true) } catch { setCopied(false) }
+  }
+  return (
+    <div className="rounded-2xl bg-ink text-white p-4 relative overflow-hidden">
+      <p className="text-lime-400 text-[11px] font-bold font-display uppercase tracking-wider">{coupon.percent}% off at {coupon.shop}</p>
+      <p className="text-[13px] text-white/70 mt-1">On any golf purchase until {couponExpiry(coupon)}. Enter the code at checkout.</p>
+      <div className="mt-3 flex items-center gap-2">
+        <span className="flex-1 h-11 rounded-xl border border-dashed border-white/40 flex items-center justify-center font-display font-extrabold tracking-[0.12em] text-[17px] select-all">{coupon.code}</span>
+        <button type="button" onClick={copy} className="h-11 px-3.5 rounded-xl bg-lime-400 text-ink text-[12px] font-bold font-display">{copied ? 'Copied ✓' : 'Copy'}</button>
+      </div>
+      <a href={coupon.shopUrl} target="_blank" rel="noreferrer" className="inline-block mt-3 text-[12px] font-bold font-display text-lime-400 underline underline-offset-4">Shop at {coupon.shop} ↗</a>
+    </div>
   )
 }

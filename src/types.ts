@@ -369,6 +369,10 @@ export interface GolferProfile {
   gloveSize?: string
   /** Which hand the glove is for */
   gloveHand?: 'LH' | 'RH'
+  /** Optional photo ID (driver's licence or passport) — earns the verified tick (client, 21 Oct call) */
+  idCheck?: { document: string; fileName: string; status: 'checking' | 'verified'; at: string }
+  /** Handicap Index confirmed with the issuing body (Golf Canada) — the tick that matters most */
+  handicapVerified?: boolean
   /** Profile picture (a data URL in the prototype; an uploaded image URL in the real app) */
   photoUrl?: string
   membership: 'Member' | 'Guest'
@@ -422,6 +426,7 @@ export interface NewAccount {
   shirtSize?: string
   gloveSize?: string
   gloveHand?: 'LH' | 'RH'
+  idCheck?: GolferProfile['idCheck']
   marketingOptIn?: boolean
   emailVerified: boolean
 }

@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import type { Course, HoleData } from '../types'
-import { TournamentCard, InfoRow, EmptyState, IconPin } from '../components'
-import { getCourse, getTournamentsByCourse } from '../data'
+import { InfoRow, EmptyState, IconPin } from '../components'
+import { getCourse, getTournament } from '../data'
 import { isPublicTournament } from '../admin/access'
+import MoreTournaments from './MoreTournaments'
 import { navigate } from '../router'
 import { useFakeLoad } from '../shell'
 import { BackLink } from './TournamentDetails'
 import { HoleMapView } from '../hole-map'
-import { dist, generateHoleMap, teeSwatch, teeTotal } from '../golf'
+import { dist, generateHoleMap, teeSwatch, teeTotal, formatClock } from '../golf'
 
 function NineTable({ label, holes, totalLabel, unit }: { label: string; holes: HoleData[]; totalLabel: string; unit: string }) {
   const par = holes.reduce((s, h) => s + h.par, 0)
@@ -123,13 +124,15 @@ function HoleGuide({ course }: { course: Course }) {
   )
 }
 
-export default function CourseDetails({ id }: { id: string }) {
+/** [tournamentId]: the tournament the golfer came from — the only one this page mentions (client, 21 Oct) */
+export default function CourseDetails({ id, tournamentId }: { id: string; tournamentId?: string }) {
   const loading = useFakeLoad(600)
   const [nine, setNine] = useState<'front' | 'back' | 'all'>('all')
   // Draft courses are only visible in the admin console
   const found = getCourse(id)
   const course = found?.lifecycle === 'draft' ? undefined : found
-  const tournaments = getTournamentsByCourse(id).filter(isPublicTournament)
+  const ours = tournamentId ? getTournament(tournamentId) : undefined
+  const event = ours && ours.courseId === id && isPublicTournament(ours) ? ours : undefined
 
   const goBack = () => (window.history.length > 1 ? window.history.back() : navigate('/tournaments'))
 
@@ -248,7 +251,10 @@ export default function CourseDetails({ id }: { id: string }) {
               value={course.designer}
             />
             {course.phone && <InfoRow icon={<span className="text-[14px]">☎</span>} label="Phone" value={course.phone} />}
-            {course.website && <InfoRow icon={<span className="text-[14px]">↗</span>} label="Website" value={course.website} />}
+            {course.website && (
+              <InfoRow icon={<span className="text-[14px]">↗</span>} label="Website"
+                value={<a href={course.website.startsWith('http') ? course.website : `https://${course.website}`} target="_blank" rel="noreferrer" className="text-pine-600 font-semibold underline underline-offset-4">{course.website}</a>} />
+            )}
             {course.dressCode && <InfoRow icon={<span className="text-[14px]">👕</span>} label="Dress code" value={course.dressCode} />}
             <div className="flex flex-wrap gap-2 pt-1">
               {course.geo && (
@@ -271,16 +277,16 @@ export default function CourseDetails({ id }: { id: string }) {
             </section>
           )}
 
-          {tournaments.length > 0 && (
-            <section>
-              <h2 className="font-display font-bold text-ink text-[18px] tracking-tight mb-3">Tournaments here</h2>
-              <div className="space-y-3">
-                {tournaments.map(t => (
-                  <TournamentCard key={t.id} tournament={t} onPress={() => navigate(`/tournaments/${t.id}`)} compact />
-                ))}
-              </div>
+          {event && (
+            <section className="bg-ink rounded-[28px] p-6 text-white">
+              <p className="text-lime-400 text-[12px] font-bold font-display uppercase tracking-wider">Your tournament here</p>
+              <h2 className="font-display font-bold text-[19px] tracking-tight mt-1">{event.name}</h2>
+              <p className="text-white/70 text-[14px] mt-1">{event.dateRange}{event.teeSheet ? ` · ${event.teeSheet.startType === 'shotgun' ? 'Shotgun start' : 'First tee time'} ${formatClock(event.teeSheet.firstTeeTime)}` : ''}</p>
+              <button onClick={() => navigate(`/tournaments/${event.id}`)} className="mt-4 h-10 px-4 rounded-full bg-lime-400 text-ink text-[13px] font-bold font-display">Back to the tournament</button>
             </section>
           )}
+
+          <MoreTournaments excludeId={event?.id} excludeCourseId={course.id} />
         </aside>
       </div>
     </div>

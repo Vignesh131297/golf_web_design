@@ -3,7 +3,9 @@ import { Button, Input, PasswordInput } from '../components'
 import { AuthLayout } from '../shell'
 import { useApp } from '../app-context'
 import { authenticate, authFailureMessage } from '../admin/access'
-import { authenticateStaff } from '../ops'
+import { authenticateAccount, authenticateStaff } from '../ops'
+import { becomeGolfer } from '../golfers'
+import { ForgotPasswordModal, SetUpLoginModal } from '../ops-ui'
 
 type SignInState = 'idle' | 'loading' | 'error' | 'server-error' | 'account'
 
@@ -19,7 +21,8 @@ const DEMO_ROLES = [
 ]
 
 export default function SignIn() {
-  const { signIn, signInAdmin, signInStaff, showToast } = useApp()
+  const { signIn, signInAdmin, signInStaff, signedOutReason } = useApp()
+  const [modal, setModal]           = useState<'setup' | 'forgot' | null>(null)
   const [email, setEmail]           = useState('')
   const [password, setPassword]     = useState('')
   const [emailError, setEmailError] = useState('')
@@ -27,7 +30,7 @@ export default function SignIn() {
   const [state, setState]           = useState<SignInState>('idle')
   const [accountMsg, setAccountMsg] = useState('')
 
-  const validateEmail = (v: string) => (!v ? 'Email is required' : !EMAIL_RE.test(v) ? 'Enter a valid email address' : '')
+  const validateEmail = (v: string) => (!v.trim() ? 'Email is required' : !EMAIL_RE.test(v.trim()) ? 'Enter a valid email address' : '')
   const validatePw    = (v: string) => (!v ? 'Password is required' : '')
 
   function handleSubmit(e: FormEvent) {
@@ -39,25 +42,32 @@ export default function SignIn() {
     if (ev || pv) return
 
     setState('loading')
-    // Simulated API call — "wrongpass" / "serverdown" demo the error states.
+    const refuse = (message?: string) => {
+      if (message) setAccountMsg(message)
+      setState(message ? 'account' : 'error')
+    }
+
+    // Simulated API call — "serverdown" demos the server error.
     // One sign-in for every account: the login response carries the role, which decides where the user lands.
     setTimeout(() => {
       if (password === 'serverdown') return setState('server-error')
-      if (password === 'wrongpass') return setState('error')
       setState('idle')
-      // Platform admins and organisers → admin console; marshals and officials → their tournament; everyone else → golfer home
-      const admin = authenticate(email, password)
-      if (admin.ok) return signInAdmin(admin.user.id)
-      if (admin.reason === 'invalid') return setState('error')
-      if (admin.reason !== 'unknown') {
+      // Golfers, organisers and platform admins: wrong passwords count towards the same lock-out as staff
+      const account = authenticateAccount(email, password)
+      if (account.ok) {
+        const admin = authenticate(email, password)
+        // Golfers who also organise land on their golf; the organiser console is one tap away
+        if (admin.ok && !admin.user.alsoGolfer) return signInAdmin(admin.user.id)
         // A real admin/organiser account that can't get in — explain why instead of treating them as a golfer
-        setAccountMsg(authFailureMessage(admin))
-        return setState('account')
+        if (!admin.ok && admin.reason !== 'unknown') return refuse(authFailureMessage(admin))
+        becomeGolfer(email)
+        return signIn()
       }
+      if (account.reason !== 'unknown') return refuse(account.message)
+      // Marshals and officials: invite not finished, locked after wrong passwords, or off every tournament get told why
       const staff = authenticateStaff(email, password)
       if (staff.ok) return signInStaff(staff.email, staff.name)
-      if (staff.reason === 'invalid') return setState('error')
-      signIn()
+      refuse(staff.message)
     }, 1400)
   }
 
@@ -69,6 +79,12 @@ export default function SignIn() {
       <h2 className="font-display font-extrabold text-ink text-[32px] tracking-tight">Welcome back</h2>
       <p className="text-gray-500 text-[15px] mt-1">Sign in to your account to continue</p>
 
+      {signedOutReason && state === 'idle' && (
+        <div className="mt-6 flex items-start gap-3 bg-amber-50 rounded-2xl px-4 py-3.5 fade-in" role="alert">
+          <span className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
+          <p className="text-sm text-amber-800"><span className="font-semibold font-display block">You’ve been signed out</span>{signedOutReason}</p>
+        </div>
+      )}
       {state === 'account' && (
         <div className="mt-6 flex items-start gap-3 bg-amber-50 rounded-2xl px-4 py-3.5 fade-in" role="alert">
           <span className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
@@ -118,7 +134,7 @@ export default function SignIn() {
         <div className="flex justify-end -mt-1">
           <button
             type="button"
-            onClick={() => showToast('Password reset email sent', 'info')}
+            onClick={() => setModal('forgot')}
             className="text-ink text-[13px] font-semibold font-display underline underline-offset-4 decoration-lime-500 decoration-2 hover:opacity-70"
           >
             Forgot password?
@@ -142,7 +158,17 @@ export default function SignIn() {
         </div>
       </div>
 
-      <p className="text-center text-sm text-gray-500 mt-7">
+      <p className="text-center text-sm text-gray-500 mt-5">
+        Marshal or official with an invite?{' '}
+        <button type="button" onClick={() => setModal('setup')}
+          className="text-ink font-semibold font-display underline underline-offset-4 decoration-lime-500 decoration-2 hover:opacity-70">
+          Set up your login
+        </button>
+      </p>
+      {modal === 'setup' && <SetUpLoginModal onClose={() => setModal(null)} />}
+      {modal === 'forgot' && <ForgotPasswordModal initialEmail={email} onClose={() => setModal(null)} />}
+
+      <p className="text-center text-sm text-gray-500 mt-4">
         Don't have an account?{' '}
         <a href="#/signup" className="text-ink font-semibold font-display underline underline-offset-4 decoration-lime-500 decoration-2 hover:opacity-70">
           Sign up

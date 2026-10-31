@@ -23,7 +23,7 @@ import {
   type SectionKey, type StepKey, type Errors,
 } from './tournament-setup'
 import { isSelectable } from './course-setup'
-import { INVITE_PASSWORD, slotStatus, staffRoleOf } from '../ops'
+import { sendInvite, slotStatus, staffRoleOf } from '../ops'
 import { SlotChip } from '../ops-ui'
 import { SCRAMBLE_ALLOWANCES } from '../golf'
 
@@ -727,8 +727,8 @@ function Rules({ t, set, e }: SectionProps) {
                   {status && (
                     <div className="flex flex-wrap items-center gap-2 mt-2.5">
                       <SlotChip status={status} invited={!!o.invitedAt} />
-                      {canInvite && status !== 'ended' && (
-                        <button type="button" onClick={() => { updateOfficial(i, { invitedAt: new Date().toISOString() }); showToast(`Login sent to ${o.email} (demo password: ${INVITE_PASSWORD})`) }}
+                      {canInvite && status === 'invited' && (
+                        <button type="button" onClick={() => { const code = sendInvite(o.email!); updateOfficial(i, { invitedAt: new Date().toISOString() }); showToast(`Invite sent to ${o.email} — code ${code} (shown for the demo; valid 24 hours)`) }}
                           className="h-8 px-3.5 rounded-full bg-canvas text-[12px] font-bold font-display text-ink hover:bg-gray-200">
                           {o.invitedAt ? 'Resend login' : 'Send login'}
                         </button>

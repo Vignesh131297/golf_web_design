@@ -103,7 +103,7 @@ function Routes() {
       case 'tournament':   return <TournamentDetails key={key} id={route.id} />
       case 'leaderboard':  return <Leaderboard key={key} id={route.id} />
       case 'play':         return <LivePlay key={key} id={route.id} />
-      case 'course':       return <CourseDetails key={key} id={route.id} />
+      case 'course':       return <CourseDetails key={key} id={route.id} tournamentId={route.tournamentId} />
       case 'profile':      return <Profile key={key} />
       case 'edit-profile': return <EditProfile key={key} />
       default:             return <NotFound home="/home" />

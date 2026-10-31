@@ -199,7 +199,7 @@ export function withTournamentDefaults(t: Tournament): Tournament {
   return {
     ...t,
     rounds: t.rounds?.length ? t.rounds : defaultRounds(t.startDate, t.endDate),
-    scoring: { ...DEFAULT_SCORING, ...(t.format === 'Stableford' ? { basis: 'net' as const } : {}), ...t.scoring },
+    scoring: { ...DEFAULT_SCORING, ...(t.format === 'Stableford' ? { basis: 'net' as const } : {}), ...(t.format === 'Four-Ball' ? { allowancePct: 85 } : {}), ...t.scoring },
     eligibility: t.eligibility ?? DEFAULT_ELIGIBILITY,
     divisions,
     registration: t.registration ?? defaultRegistration(t.startDate),

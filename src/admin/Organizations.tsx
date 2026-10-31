@@ -145,7 +145,7 @@ function OrgForm({ org, onDone }: { org: Organization; onDone: (saved: boolean) 
 
   function submit(e: FormEvent) {
     e.preventDefault()
-    if (!name.trim() || !street.trim() || !city.trim() || !region.trim() || !postal.trim()) { setError('Name, street, city, province / state and postal code are required'); return }
+    if (!name.trim() || !postal.trim()) { setError('Name and postal code are required'); return }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setError('Enter a valid contact email'); return }
     const postalErr = postalCodeError(country, postal)
     if (postalErr) { setError(postalErr); return }
@@ -177,7 +177,7 @@ function OrgForm({ org, onDone }: { org: Organization; onDone: (saved: boolean) 
       <div className="grid sm:grid-cols-2 gap-5">
         <Input label="City" value={city} onChange={e => { setCity(e.target.value); setError('') }} />
         <Input label="Province / state" value={region} onChange={e => { setRegion(e.target.value); setError('') }} />
-        <Input label="Postal / ZIP code" value={postal} onChange={e => { setPostal(e.target.value.toUpperCase()); setError('') }} />
+        <Input label="Postal / ZIP code *" value={postal} onChange={e => { setPostal(e.target.value.toUpperCase()); setError('') }} />
         <SelectField label="Country" value={country} onChange={setCountry} options={COUNTRIES} />
       </div>
       <div className="grid sm:grid-cols-2 gap-5">

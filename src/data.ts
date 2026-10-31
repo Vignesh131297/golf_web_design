@@ -61,6 +61,8 @@ export function applyNewAccount(a: NewAccount) {
     emergencyContactRelationship: a.emergencyContactRelationship,
     handicapBody: a.handicapBody,
     handicapNumber: a.handicapNumber.trim(),
+    idCheck: a.idCheck,
+    handicapVerified: false,
     homeClub: a.homeClub.trim(),
     preferredTee: a.preferredTee,
     dietary: a.dietary,
@@ -154,6 +156,15 @@ export const MOCK_COURSES: Course[] = [
       { hole: 7,  par: 3, yards: 220, handicap: 11 },
       { hole: 8,  par: 4, yards: 470, handicap: 1  },
       { hole: 9,  par: 4, yards: 385, handicap: 15 },
+      { hole: 10, par: 4, yards: 420, handicap: 10 },
+      { hole: 11, par: 5, yards: 565, handicap: 4  },
+      { hole: 12, par: 3, yards: 185, handicap: 16 },
+      { hole: 13, par: 4, yards: 445, handicap: 8  },
+      { hole: 14, par: 4, yards: 400, handicap: 14 },
+      { hole: 15, par: 5, yards: 545, handicap: 2  },
+      { hole: 16, par: 3, yards: 205, handicap: 18 },
+      { hole: 17, par: 4, yards: 440, handicap: 6  },
+      { hole: 18, par: 4, yards: 430, handicap: 12 },
     ],
   },
   {
@@ -189,6 +200,15 @@ export const MOCK_COURSES: Course[] = [
       { hole: 7, par: 3, yards: 160, handicap: 17 },
       { hole: 8, par: 4, yards: 445, handicap: 3  },
       { hole: 9, par: 4, yards: 415, handicap: 9  },
+      { hole: 10, par: 4, yards: 410, handicap: 8  },
+      { hole: 11, par: 3, yards: 175, handicap: 16 },
+      { hole: 12, par: 5, yards: 545, handicap: 4  },
+      { hole: 13, par: 4, yards: 400, handicap: 12 },
+      { hole: 14, par: 4, yards: 455, handicap: 2  },
+      { hole: 15, par: 3, yards: 205, handicap: 14 },
+      { hole: 16, par: 5, yards: 520, handicap: 6  },
+      { hole: 17, par: 4, yards: 395, handicap: 18 },
+      { hole: 18, par: 4, yards: 395, handicap: 10 },
     ],
   },
 ]
@@ -217,6 +237,7 @@ export const MOCK_TOURNAMENTS: Tournament[] = [
     officials: [
       { name: 'Dana Whitfield', role: 'Tournament director', phone: '+1 (706) 555-0110' },
       { name: 'Ravi Menon', role: 'Marshal', phone: '+1 (706) 555-0131', email: 'marshal@gmail.com', invitedAt: '2026-10-01T09:00:00' },
+      { name: 'Helen Brooks', role: 'Tournament official', phone: '+1 (706) 555-0124', email: 'official@gmail.com', invitedAt: '2026-10-01T09:00:00' },
     ],
     players: 87,
     maxPlayers: 120,
@@ -263,7 +284,9 @@ export const MOCK_TOURNAMENTS: Tournament[] = [
     location: 'Highlands, North Carolina, USA',
     city: 'Highlands, North Carolina',
     country: 'United States',
-    status: 'registration-open',
+    status: 'completed',
+    // Played Sep 27–28; the demo golfer's Four-Ball pair is in the results (prototype)
+    resultsPublished: true,
     format: 'Four-Ball',
     category: 'Net & Gross Divisions',
     description:
@@ -288,6 +311,7 @@ export const MOCK_TOURNAMENTS: Tournament[] = [
     city: 'Savannah, Georgia',
     country: 'United States',
     status: 'completed',
+    resultsPublished: true,
     format: 'Scramble',
     category: 'Mixed Invitational',
     description:
@@ -296,6 +320,7 @@ export const MOCK_TOURNAMENTS: Tournament[] = [
     registrationStatus: 'closed',
     officials: [
       { name: 'Ravi Menon', role: 'Marshal', phone: '+1 (706) 555-0131', email: 'marshal@gmail.com', invitedAt: '2026-08-20T09:00:00' },
+      { name: 'Helen Brooks', role: 'Tournament official', phone: '+1 (706) 555-0124', email: 'official@gmail.com', invitedAt: '2026-08-20T09:00:00' },
     ],
     organizerId: 'o-savannah',
     players: 40,
@@ -430,6 +455,8 @@ export const MOCK_TOURNAMENTS: Tournament[] = [
       // Logins for this tournament only (demo passwords in ops.ts): marshal@gmail.com / marshal, official@gmail.com / official
       { name: 'Ravi Menon', role: 'Marshal', phone: '+1 (706) 555-0131', email: 'marshal@gmail.com', invitedAt: '2026-09-30T10:00:00' },
       { name: 'Helen Brooks', role: 'Tournament official', phone: '+1 (706) 555-0124', email: 'official@gmail.com', invitedAt: '2026-09-30T10:00:00' },
+      // A second official on the day (official2@gmail.com / official): two officials can't decide the same dispute twice
+      { name: 'Marcus Lee', role: 'Tournament official', phone: '+1 (706) 555-0127', email: 'official2@gmail.com', invitedAt: '2026-09-30T10:00:00' },
       { name: '', role: 'Marshal', phone: '' },
     ],
     organizerId: 'o-augusta',

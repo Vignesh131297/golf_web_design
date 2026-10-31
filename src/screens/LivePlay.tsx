@@ -10,13 +10,13 @@ import {
   addShot, cardFor, cardState, entriesFor, groupOf, leaderboard, myEntry, roundHoles, setCardState, setStrokes,
   shotsFor, undoShot, useLiveVersion,
 } from '../live'
-import { dist, generateHoleMap, playingHandicap, scoreLabel, strokesOnHole, toPar } from '../golf'
+import { dist, generateHoleMap, playingHandicap, scoreLabel, strokesOnHole, toPar, formatClock } from '../golf'
 import { HoleMapView, greenDistances, hazardsAhead } from '../hole-map'
 import { BackLink } from './TournamentDetails'
 import { ScoreCell } from './Leaderboard'
-import { incidentsFor, logIncident, markedBy, markerCardFor, markerOf, mismatches, setMarkerStrokes, useOpsVersion } from '../ops'
-import { IncidentForm } from '../ops-ui'
-import { teeSetIdFor } from '../live'
+import { currentRound, incidentsFor, logIncident, markedBy, markerCardFor, markerMissing, markerOf, mismatches, setMarkerStrokes, useOpsVersion } from '../ops'
+import { IncidentForm, MyRoundStatus, MyRulings } from '../ops-ui'
+import { ROUND_STATUS_LABEL, groupBehind, roundStatus, suspensionFor, teeSetIdFor } from '../live'
 
 const HAZARD_LABEL = { bunker: 'Bunker', water: 'Water', trees: 'Trees' }
 
@@ -35,13 +35,16 @@ export default function LivePlay({ id }: { id: string }) {
   const t = getTournament(id)
   const course = t ? getCourse(t.courseId) : undefined
   const me = t ? myEntry(t.id) : undefined
-  const round = 1
+  const round = t ? currentRound(t) : 1
   const holes = t && course ? roundHoles(t, course, round) : []
   const card = t && me ? cardFor(t, me.id, round) : []
   const firstOpen = Math.max(0, card.findIndex(s => s === null))
   const [index, setIndex] = useState(firstOpen === -1 ? 0 : firstOpen)
   const [target, setTarget] = useState<Point | undefined>()
   const [draft, setDraft] = useState<number | null>(null)
+  // The official signed off the last round while this screen was open: carry on from the new round's first open hole
+  const [seenRound, setSeenRound] = useState(round)
+  if (round !== seenRound) { setSeenRound(round); setIndex(firstOpen) }
 
   if (!t || !course || !me || me.status !== 'registered' || t.status !== 'in-progress') {
     return (
@@ -55,7 +58,9 @@ export default function LivePlay({ id }: { id: string }) {
     )
   }
 
-  const locked = cardState(t.id, me.id, round) !== 'in-progress'
+  // A handed-in card, or an official's WD / NS / DNF / DQ, ends scoring for the round
+  const out = roundStatus(t.id, me.id, round) !== 'playing' ? roundStatus(t.id, me.id, round) : undefined
+  const locked = cardState(t.id, me.id, round) !== 'in-progress' || !!out
   const hole = holes[index]
   const map = hole.map ?? generateHoleMap(hole)
   const division = t.divisions?.find(d => d.id === me.divisionId)
@@ -72,11 +77,13 @@ export default function LivePlay({ id }: { id: string }) {
   const strokes = draft ?? saved ?? hole.par
   const row = leaderboard(t, round).find(r => r.entry.id === me.id)
   const group = groupOf(t.id, round, me.id)
+  const behind = groupBehind(t.id, round, me.id)
   const partners = group ? entriesFor(t.id).filter(e => group.entryIds.includes(e.id) && !e.isMe) : []
   const blanks = card.filter(s => s === null).length
-  // Partners mark each other: I enter my partner's score too, and the two cards must agree
+  // Each player marks the next one in the group: I enter their score too, and the two cards must agree
   const marker = markerOf(t.id, round, me.id)
-  const markees = markedBy(t.id, round, me.id)
+  const markees = markedBy(t.id, round, me.id).filter(p => roundStatus(t.id, p.id, round) === 'playing')
+  const noMarker = markerMissing(t, round, me.id)
   const myMarked = markerCardFor(t, me.id, round)
   const disputedHoles = new Set(incidentsFor(t.id).filter(i => i.kind === 'score-dispute' && i.status !== 'resolved' && i.entryIds.includes(me.id)).map(i => i.hole))
   const unsettled = mismatches(t, me.id, round).filter(i => !disputedHoles.has(holes[i].hole))
@@ -121,6 +128,25 @@ export default function LivePlay({ id }: { id: string }) {
     showToast('Sent to the committee — keep playing, they’ll decide')
   }
 
+  /** Players can't see who is slow ahead of them, but they do notice the group behind waiting on nobody (client, 21 Oct) */
+  function reportGroupBehind() {
+    if (!behind) return
+    const names = entriesFor(t!.id).filter(e => behind.entryIds.includes(e.id)).map(e => e.name)
+    showDialog({
+      title: 'Report the group behind?',
+      message: `The marshal gets a quiet note that the ${formatClock(behind.time)} group (${names.join(', ')}) is falling behind while you're on hole ${hole.hole}. Only the marshal and the committee see it.`,
+      confirmLabel: 'Tell the marshal',
+      onConfirm: () => {
+        logIncident({
+          tournamentId: t!.id, round, kind: 'slow-play', hole: hole.hole, entryIds: behind.entryIds,
+          note: `Player report: we're on hole ${hole.hole} and the group behind (${formatClock(behind.time)} tee time) is well back — ${names.join(', ')}.`,
+          raisedBy: { name: me!.name, role: 'golfer' },
+        })
+        showToast('Sent to the marshal — thanks')
+      },
+    })
+  }
+
   function submitCard() {
     // Golfers submit the card as entered and are responsible for it (client answer T-09)
     showDialog({
@@ -144,6 +170,25 @@ export default function LivePlay({ id }: { id: string }) {
           </>
         }
       />
+
+      {/* An official stopped play: shown until they resume it */}
+      {suspensionFor(t.id) && (
+        <div role="alert" className="mb-5 rounded-2xl bg-rose-600 text-white px-5 py-4">
+          <p className="font-display font-bold text-[16px]">Play suspended — {suspensionFor(t.id)!.reason.toLowerCase()}. Mark your ball and stop play.</p>
+          <p className="text-[14px] text-white/85 mt-0.5">
+            {suspensionFor(t.id)!.note ? `${suspensionFor(t.id)!.by}, tournament official: “${suspensionFor(t.id)!.note}”` : 'Wait for the official to resume play. Your scores so far are saved.'}
+          </p>
+        </div>
+      )}
+
+      <MyRoundStatus t={t} entryId={me.id} round={round} />
+
+      {noMarker && (
+        <div role="status" className="mb-5 rounded-2xl bg-amber-50 text-amber-900 px-5 py-4">
+          <p className="font-display font-bold text-[15px]">{marker?.name} can’t mark your card any more</p>
+          <p className="text-[13px] mt-0.5">Keep playing and scoring. The official gives your card to someone else in your group.</p>
+        </div>
+      )}
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -253,14 +298,14 @@ export default function LivePlay({ id }: { id: string }) {
               </button>
             )}
             <Button fullWidth className="mt-5" onClick={saveScore} disabled={locked}>
-              {locked ? 'Card submitted' : saved !== null && draft === null ? 'Saved — next hole' : 'Save score'}
+              {out ? ROUND_STATUS_LABEL[out] : locked ? 'Card submitted' : saved !== null && draft === null ? 'Saved — next hole' : 'Save score'}
             </Button>
           </section>
 
           {unsettled.length > 0 && (
             <section className="bg-rose-50 rounded-[28px] p-6">
-              <h2 className="font-display font-bold text-rose-800 text-[17px]">Your marker’s card doesn’t match</h2>
-              <p className="text-[13px] text-rose-700 mt-1">Settle it with {marker?.name.split(' ')[0] ?? 'your marker'} now. If you can’t agree, the committee decides.</p>
+              <h2 className="font-display font-bold text-rose-800 text-[17px]">Score discrepancy with your marker</h2>
+              <p className="text-[13px] text-rose-700 mt-1">{marker?.name.split(' ')[0] ?? 'Your marker'} wrote down a different score. Agree on one with them now; if you can’t, the committee decides.</p>
               <ul className="mt-3 space-y-3">
                 {unsettled.map(i => (
                   <li key={i} className="bg-white rounded-2xl p-3.5">
@@ -279,7 +324,7 @@ export default function LivePlay({ id }: { id: string }) {
           {markees.length > 0 && (
             <section className="bg-white rounded-[28px] shadow-card p-6">
               <h2 className="font-display font-bold text-ink text-[17px]">You’re marking</h2>
-              <p className="text-[12px] text-gray-500 mt-0.5">Enter your partner’s score for hole {hole.hole}. {marker ? `${marker.name} marks yours.` : ''}</p>
+              <p className="text-[12px] text-gray-500 mt-0.5">Enter their score for hole {hole.hole}. {marker ? `${marker.name} marks yours.` : ''}</p>
               <ul className="mt-3 space-y-3">
                 {markees.map(p => {
                   const theirs = cardFor(t, p.id, round)[index]
@@ -305,10 +350,19 @@ export default function LivePlay({ id }: { id: string }) {
             </section>
           )}
 
+          <MyRulings t={t} entryId={me.id} />
+
           <section className="bg-white rounded-[28px] shadow-card p-5 flex items-center gap-4">
             <span className="flex-1 text-[13px] text-gray-600 leading-relaxed"><span className="font-bold text-ink block text-[14px]">Need a ruling?</span>A marshal or the committee answers rules questions and disputes.</span>
             <Button size="sm" variant="secondary" onClick={() => setAsking(true)}>Ask for a ruling</Button>
           </section>
+
+          {behind && (
+            <section className="bg-white rounded-[28px] shadow-card p-5 flex items-center gap-4">
+              <span className="flex-1 text-[13px] text-gray-600 leading-relaxed"><span className="font-bold text-ink block text-[14px]">Group behind falling back?</span>Tell the marshal quietly — e.g. you’re on the green and they’re still not on the tee.</span>
+              <Button size="sm" variant="secondary" onClick={reportGroupBehind}>Report slow group</Button>
+            </section>
+          )}
 
           {partners.length > 0 && (
             <section className="bg-white rounded-[28px] shadow-card p-6">
@@ -335,7 +389,7 @@ export default function LivePlay({ id }: { id: string }) {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="font-display font-bold text-ink text-[18px]">My scorecard</h2>
           {locked
-            ? <span className="text-[13px] font-semibold text-pine-600">{cardState(t.id, me.id, round) === 'verified' ? 'Verified by the committee' : 'Submitted — awaiting verification'}</span>
+            ? <span className="text-[13px] font-semibold text-pine-600">{out ? `${ROUND_STATUS_LABEL[out]} — left out of the results` : cardState(t.id, me.id, round) === 'verified' ? 'Verified by the committee' : 'Submitted — awaiting verification'}</span>
             : <span className="flex items-center gap-3">
                 {unsettled.length > 0 && <span className="text-[12px] text-rose-600 font-semibold">Settle hole {unsettled.map(i => holes[i].hole).join(', ')} with your marker first</span>}
                 <Button size="sm" onClick={submitCard} disabled={unsettled.length > 0}>{blanks ? `Submit card (${blanks} blank)` : 'Submit card'}</Button>

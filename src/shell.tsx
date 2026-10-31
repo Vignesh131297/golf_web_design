@@ -4,6 +4,7 @@ import { useApp } from './app-context'
 import { MOCK_PROFILE } from './data'
 import { Avatar, IconHome, IconTournament, IconProfile, IconSignOut } from './components'
 import { STAFF_ROLE_LABEL, assignmentsFor } from './ops'
+import { getOrganization, organiserLoginFor } from './admin/access'
 
 /* ───────────────── Brand ───────────────── */
 
@@ -30,11 +31,13 @@ const NAV = [
 ]
 
 function Sidebar({ route }: { route: Route }) {
-  const { signOut, profileVersion, switchRole } = useApp()
+  const { signOut, profileVersion, switchRole, signInAdmin } = useApp()
   void profileVersion // re-render when the profile changes
   const p = MOCK_PROFILE
-  // One account, several roles: tournaments where this golfer is also a marshal or official
+  // One account, several roles: tournaments where this golfer is also a marshal or official…
   const duties = assignmentsFor(p.email).filter(a => a.window !== 'ended')
+  // …and the organisation they help run
+  const organiser = organiserLoginFor(p.email)
 
   return (
     <aside className="hidden lg:flex fixed inset-y-0 left-0 w-[264px] flex-col bg-ink p-5 z-30">
@@ -61,9 +64,15 @@ function Sidebar({ route }: { route: Route }) {
         })}
       </nav>
 
-      {duties.length > 0 && (
+      {(duties.length > 0 || organiser) && (
         <div className="mt-6 rounded-2xl bg-white/[0.06] p-2">
           <p className="text-white/45 text-[10px] font-bold font-display uppercase tracking-wider px-2 pt-1">Your other roles</p>
+          {organiser && (
+            <button onClick={() => signInAdmin(organiser.id)} className="mt-1 w-full text-left rounded-xl px-2 py-2 hover:bg-white/[0.06] transition-colors">
+              <span className="block text-lime-400 text-[13px] font-bold font-display">Organiser ⇄</span>
+              <span className="block text-white/55 text-[12px] truncate">{getOrganization(organiser.organizationId)?.name ?? 'Your organisation'}</span>
+            </button>
+          )}
           {duties.map(a => (
             <button key={a.tournament.id} onClick={() => switchRole('staff', a.tournament.id)}
               className="mt-1 w-full text-left rounded-xl px-2 py-2 hover:bg-white/[0.06] transition-colors">

@@ -1,12 +1,50 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { DialogData, NewAccount, ToastData } from './types'
-import { MOCK_PROFILE, applyNewAccount } from './data'
+import { MOCK_PROFILE } from './data'
 import { navigate } from './router'
 import {
-  getUser, getRole, getOrganization, userPermissions, useAccessVersion,
+  getUser, getRole, getOrganization, getUsers, setPasswordByEmail, userPermissions, useAccessVersion,
   type AdminUser, type Role as AdminRole, type Organization,
 } from './admin/access'
-import { assignmentsFor, type Actor } from './ops'
+import { assignmentsFor, registerAccounts, sessionEnded, type Actor } from './ops'
+import { golferPassword, registerGolfer, rememberGolfer, restoreGolfer, setGolferPassword, signOutGolfer } from './golfers'
+
+// Forgot password and the lock-out in ops.ts cover console accounts and golfers as well as marshals and officials
+registerAccounts({
+  password: email => getUsers().find(u => u.email.toLowerCase() === email)?.password ?? golferPassword(email),
+  setPassword: (email, password) => {
+    setPasswordByEmail(email, password)
+    setGolferPassword(email, password)
+  },
+})
+
+/** This tab's sign-in, so a reload keeps it. A new tab starts signed out, so two roles can run side by side. */
+const SESSION_KEY = 'gtp-session-web'
+
+interface SavedSession {
+  role: Role
+  adminUserId: string | null
+  staffEmail: string | null
+  staffName: string
+  staffSince: string | null
+  signedInAt: string | null
+}
+
+function restoreSession(): SavedSession | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? 'null') as SavedSession | null
+    if (!saved || (saved.role === 'admin' && !getUser(saved.adminUserId ?? ''))) return null
+    restoreGolfer()
+    return saved
+  } catch { return null }
+}
+
+function saveSession(session: SavedSession | null) {
+  try {
+    if (session) sessionStorage.setItem(SESSION_KEY, JSON.stringify(session))
+    else sessionStorage.removeItem(SESSION_KEY)
+  } catch { /* private mode: sign-in lasts until reload */ }
+}
 
 /** First admin page this set of permissions can open */
 export function adminHomePath(perms: string[]) {
@@ -26,7 +64,6 @@ export interface AccountBasics {
   fullName: string
   email: string
   phone: string
-  /** Needed for organiser logins (golfer accounts are mock-only) */
   password?: string
   accountType?: AccountType
   firstName?: string
@@ -52,6 +89,12 @@ interface AppState {
   /** Marshal / official login: their email decides which tournaments they can open */
   staffEmail: string | null
   staffName: string
+  /** When this marshal / official session started (sessions ended after this are over) */
+  staffSince: string | null
+  /** Why the last session was ended by someone else (shown on the sign-in page) */
+  signedOutReason: string | null
+  /** The organiser took them off, or their password was reset: sign out now and say why */
+  forceSignOut: (reason: string) => void
   /** The signed-in console user as recorded on incidents and score changes */
   consoleActor: Actor | undefined
   /** Does the signed-in admin have this permission (e.g. "tournaments.edit")? */
@@ -79,15 +122,19 @@ interface AppState {
 const AppContext = createContext<AppState | null>(null)
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [role, setRole]             = useState<Role | null>(null)
+  const [restored]                  = useState(restoreSession)
+  const [role, setRole]             = useState<Role | null>(restored?.role ?? null)
   const isAuthenticated             = role !== null
   const [basics, setBasics]         = useState<AccountBasics | null>(null)
   const [toast, setToast]           = useState<ToastData | null>(null)
   const [dialog, setDialog]         = useState<DialogData | null>(null)
   const [profileVersion, setPV]     = useState(0)
-  const [adminUserId, setAdminUserId] = useState<string | null>(null)
-  const [staffEmail, setStaffEmail] = useState<string | null>(null)
-  const [staffName, setStaffName]   = useState('')
+  const [adminUserId, setAdminUserId] = useState<string | null>(restored?.adminUserId ?? null)
+  const [staffEmail, setStaffEmail] = useState<string | null>(restored?.staffEmail ?? null)
+  const [staffName, setStaffName]   = useState(restored?.staffName ?? '')
+  const [staffSince, setStaffSince] = useState<string | null>(restored?.staffSince ?? null)
+  const [signedInAt, setSignedInAt] = useState<string | null>(restored?.signedInAt ?? null)
+  const [signedOutReason, setSignedOutReason] = useState<string | null>(null)
 
   // Re-derive permissions whenever roles or users change (e.g. an admin edits their own role)
   const accessVersion = useAccessVersion()
@@ -114,12 +161,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const touchProfile = useCallback(() => setPV(v => v + 1), [])
 
   const signIn = useCallback(() => {
+    setSignedInAt(new Date().toISOString())
     setRole('golfer')
     navigate('/home', { replace: true })
     showToast(`Welcome back, ${MOCK_PROFILE.firstName}`)
   }, [showToast])
 
   const signInAdmin = useCallback((userId: string) => {
+    setSignedInAt(s => s ?? new Date().toISOString())
     setAdminUserId(userId)
     setRole('admin')
     const user = getUser(userId)
@@ -130,6 +179,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const signInStaff = useCallback((email: string, name: string) => {
     setStaffEmail(email)
     setStaffName(name)
+    setStaffSince(new Date().toISOString())
+    setSignedInAt(new Date().toISOString())
+    setSignedOutReason(null)
     setRole('staff')
     // Straight into the tournament that's on today, if there's exactly one
     const live = assignmentsFor(email).filter(a => a.window === 'live')
@@ -141,6 +193,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (to === 'staff') {
       setStaffEmail(MOCK_PROFILE.email)
       setStaffName(`${MOCK_PROFILE.firstName} ${MOCK_PROFILE.lastName}`)
+      setStaffSince(new Date().toISOString())
       setRole('staff')
       navigate(tournamentId ? `/staff/${tournamentId}` : '/staff')
     } else {
@@ -158,14 +211,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cancelLabel: 'Stay',
       destructive: true,
       onConfirm: () => {
+        signOutGolfer()
         setRole(null)
         setAdminUserId(null)
         setStaffEmail(null)
+        setSignedInAt(null)
         navigate('/signin', { replace: true })
         showToast('Signed out successfully', 'info')
       },
     })
   }, [showToast])
+
+  const forceSignOut = useCallback((reason: string) => {
+    signOutGolfer()
+    setRole(null)
+    setAdminUserId(null)
+    setStaffEmail(null)
+    setStaffSince(null)
+    setSignedInAt(null)
+    setDialog(null)
+    setSignedOutReason(reason)
+    navigate('/signin', { replace: true })
+  }, [])
 
   const startSetup = useCallback((b: AccountBasics) => {
     setBasics(b)
@@ -175,6 +242,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   /** Organiser sign-up finished: their pending organisation exists, sign them into the console */
   const completeOrganizerSetup = useCallback((userId: string) => {
     setBasics(null)
+    setSignedInAt(new Date().toISOString())
     setAdminUserId(userId)
     setRole('admin')
     navigate('/admin', { replace: true })
@@ -182,19 +250,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [showToast])
 
   const completeSetup = useCallback((a: NewAccount) => {
-    applyNewAccount(a)
+    registerGolfer(basics?.password ?? '', a)
     setBasics(null)
+    setSignedInAt(new Date().toISOString())
     setRole('golfer')
     setPV(v => v + 1)
     navigate('/home', { replace: true })
     showToast(`Welcome, ${MOCK_PROFILE.firstName}! We've emailed a confirmation to ${MOCK_PROFILE.email}`)
-  }, [showToast])
+  }, [showToast, basics])
+
+  // A reload keeps this tab signed in, and keeps any profile edits
+  useEffect(() => {
+    saveSession(role ? { role, adminUserId, staffEmail, staffName, staffSince, signedInAt } : null)
+  }, [role, adminUserId, staffEmail, staffName, staffSince, signedInAt])
+
+  useEffect(() => {
+    window.addEventListener('pagehide', rememberGolfer)
+    return () => window.removeEventListener('pagehide', rememberGolfer)
+  }, [])
+
+  // A new password ends every other session on this account (marshals and officials: StaffConsole checks theirs)
+  const sessionEmail = role === 'admin' ? adminUser?.email : role === 'golfer' ? MOCK_PROFILE.email : undefined
+  useEffect(() => {
+    if (!sessionEmail || !signedInAt) return
+    const check = () => { const why = sessionEnded(sessionEmail, signedInAt); if (why) forceSignOut(why) }
+    check()
+    const timer = setInterval(check, 3000)
+    return () => clearInterval(timer)
+  }, [sessionEmail, signedInAt, forceSignOut])
 
   const value = useMemo<AppState>(() => ({
-    isAuthenticated, role, basics, adminUser, adminRole, adminOrg, staffEmail, staffName, consoleActor, can, toast, dialog, profileVersion,
+    isAuthenticated, role, basics, adminUser, adminRole, adminOrg, staffEmail, staffName, staffSince, signedOutReason, forceSignOut, consoleActor, can, toast, dialog, profileVersion,
     showToast, dismissToast, showDialog, closeDialog,
     signIn, signInAdmin, signInStaff, switchRole, signOut, startSetup, completeSetup, completeOrganizerSetup, touchProfile,
-  }), [isAuthenticated, role, basics, adminUser, adminRole, adminOrg, staffEmail, staffName, consoleActor, can, toast, dialog, profileVersion,
+  }), [isAuthenticated, role, basics, adminUser, adminRole, adminOrg, staffEmail, staffName, staffSince, signedOutReason, forceSignOut, consoleActor, can, toast, dialog, profileVersion,
        showToast, dismissToast, showDialog, closeDialog,
        signIn, signInAdmin, signInStaff, switchRole, signOut, startSetup, completeSetup, completeOrganizerSetup, touchProfile])
 

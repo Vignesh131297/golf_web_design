@@ -427,7 +427,7 @@ export function PhoneInput({ label, value, onChange, error, hint, placeholder = 
         <div className="relative w-[104px] flex-shrink-0">
           <div className={`${fieldClass(!!error, onCanvas)} flex items-center gap-1.5 px-3 pointer-events-none`} aria-hidden>
             <span className="text-[18px] leading-none">{code.flag}</span>
-            <span className="text-[14px] font-semibold text-ink">{code.dial}</span>
+            <span className="text-[14px] font-semibold text-ink">{code.shown}</span>
             <svg width="12" height="12" viewBox="0 0 16 16" fill="none" className="ml-auto"><path d="M4 6l4 4 4-4" stroke="#6b7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </div>
           <select
@@ -436,7 +436,7 @@ export function PhoneInput({ label, value, onChange, error, hint, placeholder = 
             onChange={e => { setCountry(e.target.value); onChange(joinPhone(e.target.value, number)) }}
             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
           >
-            {PHONE_CODES.map(c => <option key={c.country} value={c.country}>{c.flag} {c.country} ({c.dial})</option>)}
+            {PHONE_CODES.map(c => <option key={c.country} value={c.country}>{c.flag} {c.country} ({c.shown})</option>)}
           </select>
         </div>
         <input
@@ -697,7 +697,7 @@ export function TopAppBar({ title, onBack, action, transparent }: TopAppBarProps
 interface InfoRowProps {
   icon: ReactNode
   label: string
-  value: string
+  value: ReactNode
 }
 
 export function InfoRow({ icon, label, value }: InfoRowProps) {
@@ -1072,5 +1072,18 @@ export function FilterChip({ label, active, onClick }: FilterChipProps) {
     >
       {label}
     </button>
+  )
+}
+
+/** Blue tick: photo ID checked, or Handicap Index confirmed with the handicap body (client, 21 Oct call) */
+export function VerifiedTick({ kind, size = 14 }: { kind: 'id' | 'handicap'; size?: number }) {
+  const label = kind === 'id' ? 'ID verified' : 'Handicap verified'
+  return (
+    <span title={label} aria-label={label} role="img" className="inline-flex align-middle flex-shrink-0">
+      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+        <path fill={kind === 'id' ? '#1d9bf0' : '#2f7049'} d="M12 1.5l2.6 1.9 3.2-.1 1 3 2.6 1.9-1 3.1 1 3.1-2.6 1.9-1 3-3.2-.1L12 22.5l-2.6-1.9-3.2.1-1-3-2.6-1.9 1-3.1-1-3.1 2.6-1.9 1-3 3.2.1z"/>
+        <path d="M7.6 12.3l3 3 5.8-6" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    </span>
   )
 }

@@ -14,7 +14,7 @@ export type Route =
   | { name: 'tournament'; id: string }
   | { name: 'leaderboard'; id: string }
   | { name: 'play'; id: string }
-  | { name: 'course'; id: string }
+  | { name: 'course'; id: string; tournamentId?: string }
   | { name: 'profile' }
   | { name: 'edit-profile' }
   | { name: 'admin' }
@@ -63,6 +63,7 @@ export function parseHash(hash: string): Route {
   if (a === 'tournaments' && b && c === 'leaderboard') return { name: 'leaderboard', id: b }
   if (a === 'tournaments' && b && c === 'play') return { name: 'play', id: b }
   if (a === 'courses' && b && !c) return { name: 'course', id: b }
+  if (a === 'courses' && b && c) return { name: 'course', id: b, tournamentId: c }
   if (a === 'profile' && !b) return { name: 'profile' }
   if (a === 'profile' && b === 'edit') return { name: 'edit-profile' }
   return { name: 'not-found' }

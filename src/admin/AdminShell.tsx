@@ -6,6 +6,7 @@ import { Button, IconSignOut } from '../components'
 import { resetDemoData } from '../store'
 import { resetLiveData } from '../live'
 import { resetOpsData } from '../ops'
+import { resetRewards } from '../rewards'
 import { resetAccessData, verifyOrganizationEmail, type OrgStatus } from './access'
 import { navigate } from '../router'
 
@@ -149,7 +150,7 @@ function useResetDemo() {
     message: 'This restores the original tournaments, courses, organisers, roles and admin users, and removes every change made in the admin console on this device.',
     confirmLabel: 'Reset data',
     destructive: true,
-    onConfirm: () => { resetDemoData(); resetAccessData(); resetLiveData(); resetOpsData(); showToast('Demo data restored', 'info') },
+    onConfirm: () => { resetDemoData(); resetAccessData(); resetLiveData(); resetOpsData(); resetRewards(); showToast('Demo data restored', 'info') },
   })
 }
 
@@ -188,7 +189,7 @@ function OrgStatusBanner() {
 }
 
 export function AdminLayout({ route, children }: { route: Route; children: ReactNode }) {
-  const { signOut, can, adminUser, adminRole, adminOrg } = useApp()
+  const { signOut, can, adminUser, adminRole, adminOrg, switchRole } = useApp()
   const reset = useResetDemo()
   // Organisation profile only makes sense for organisation members; Organizers only for platform staff
   const nav = NAV.filter(n => can(NAV_PERM[n.label]) &&
@@ -229,6 +230,12 @@ export function AdminLayout({ route, children }: { route: Route; children: React
           })}
         </nav>
 
+        {adminUser?.alsoGolfer && (
+          <button onClick={() => switchRole('golfer')} className="mt-6 rounded-2xl bg-white/[0.06] px-4 py-3 text-left hover:bg-white/[0.1] transition-colors">
+            <span className="block text-white/45 text-[10px] font-bold font-display uppercase tracking-wider">Your other roles</span>
+            <span className="block text-lime-400 text-[13px] font-bold font-display mt-1">⇄ Switch to my golf</span>
+          </button>
+        )}
         {can('settings.reset-data') && <button onClick={reset} className="mt-auto h-10 px-4 rounded-full text-left text-white/50 hover:text-white hover:bg-white/[0.06] text-[13px] font-semibold font-display transition-colors">
           ↺ Reset demo data
         </button>}

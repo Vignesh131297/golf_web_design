@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { IdentityUpload, settledId, type IdCheck } from '../verification'
 import { Button, Input, SelectField, ChoiceChips, PhoneInput, fieldClass } from '../components'
 import { Wordmark } from '../shell'
 import { useApp } from '../app-context'
@@ -64,6 +65,7 @@ export default function ProfileSetup() {
   const [saving, setSaving]   = useState(false)
   const [verified, setVerified] = useState(false)
   const [d, setD]             = useState<GolferDraft>(emptyGolferDraft)
+  const [idCheck, setIdCheck] = useState<IdCheck | undefined>()
 
   // Setup only makes sense after the account step of sign-up
   if (!basics) {
@@ -95,7 +97,7 @@ export default function ProfileSetup() {
     }
     if (!isLast) { setStep(step + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); return }
     setSaving(true)
-    setTimeout(() => completeSetup(toNewAccount(basics!, d, verified)), 1200)
+    setTimeout(() => completeSetup({ ...toNewAccount(basics!, d, verified), idCheck: settledId(idCheck) }), 1200)
   }
 
   function back() {
@@ -197,12 +199,12 @@ export default function ProfileSetup() {
                     </div>
                   )}
                 </Section>
-                <Section title="Address" hint="Optional, except your country">
+                <Section title="Address" hint="Postal code and country are required; the rest is optional">
                   <Input label="Street address" placeholder="Optional" value={d.street} onChange={e => set('street', e.target.value)} autoComplete="street-address" />
                   <div className="grid sm:grid-cols-2 gap-5">
                     <Input label="City" value={d.city} onChange={e => set('city', e.target.value)} autoComplete="address-level2" />
                     <Input label="Province / state" value={d.region} onChange={e => set('region', e.target.value)} autoComplete="address-level1" />
-                    <Input label="Postal / ZIP code" value={d.postalCode} onChange={e => set('postalCode', e.target.value.toUpperCase())} error={errors.postalCode} autoComplete="postal-code" />
+                    <Input label="Postal / ZIP code *" value={d.postalCode} onChange={e => set('postalCode', e.target.value.toUpperCase())} error={errors.postalCode} autoComplete="postal-code" />
                     <SelectField label="Country *" value={d.country} onChange={v => { set('country', v); setErrors(x => ({ ...x, postalCode: undefined })) }} options={COUNTRIES} error={errors.country} />
                   </div>
                 </Section>
@@ -264,6 +266,9 @@ export default function ProfileSetup() {
                   <ChoiceChips label="Glove size" options={GLOVE_SIZES} value={d.glove} onChange={v => set('glove', d.glove === v ? '' : v as string)} />
                   <ChoiceChips label="Glove hand" options={GLOVE_HANDS} value={d.gloveHand} onChange={v => set('gloveHand', d.gloveHand === v ? '' : v as GolferDraft['gloveHand'])}
                     hint="Right-handed golfers usually wear a left-hand glove" />
+                </Section>
+                <Section title="Identity" hint="Optional · get the verified tick">
+                  <IdentityUpload value={idCheck} onChange={setIdCheck} />
                 </Section>
                 <Section title="Catering" hint="Optional">
                   <ChoiceChips label="Dietary requirements" options={DIETARY} value={d.dietary}

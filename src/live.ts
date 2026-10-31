@@ -29,6 +29,19 @@ export interface Entry {
   /** Who entered the golfer: the golfer online, or the organiser on their behalf */
   registeredBy?: 'self' | 'organiser'
   paymentStatus?: PaymentStatus
+  /** Four-Ball pair or scramble team: partners share it */
+  teamId?: string
+}
+
+/**
+ * Verified ticks next to a player's name: photo ID checked, and Handicap Index confirmed with the
+ * handicap body. The signed-in golfer's come from their profile; other players' are fixed per player
+ * in the prototype (a real backend returns them with the registrant list).
+ */
+export function ticksFor(e: Pick<Entry, 'id' | 'isMe'>): { id: boolean; handicap: boolean } {
+  if (e.isMe) return { id: MOCK_PROFILE.idCheck?.status === 'verified', handicap: !!MOCK_PROFILE.handicapVerified }
+  const h = [...e.id].reduce((n, ch) => (n * 31 + ch.charCodeAt(0)) >>> 0, 7)
+  return { id: h % 5 < 2, handicap: h % 10 < 7 }
 }
 
 /** paid = online by card · pay-at-course = collected on the day · waived = no charge · link-sent = organiser emailed a payment link · free = no fee */
@@ -63,10 +76,14 @@ interface LiveData {
   cardState: Record<string, Record<string, Record<number, CardState>>>
   /** shots[tournamentId][entryId][round][holeNumber] */
   shots: Record<string, Record<string, Record<number, Record<number, Shot[]>>>>
+  /** roundStatus[tournamentId][entryId][round], set by an official; missing = still playing */
+  roundStatus?: Record<string, Record<string, Record<number, RoundStatus>>>
+  /** suspended[tournamentId]: play stopped by an official */
+  suspended?: Record<string, Suspension>
 }
 
 // v2: entries carry registeredBy / paymentStatus; groups seeded for pace of play
-const STORAGE_KEY = 'gtp-live-v2'
+const STORAGE_KEY = 'gtp-live-v4'
 
 const FIRST = ['James', 'Olivia', 'Liam', 'Emma', 'Noah', 'Ava', 'Ethan', 'Sophia', 'Lucas', 'Mia', 'Mason', 'Isla', 'Logan', 'Grace', 'Owen', 'Chloe', 'Caleb', 'Zoe', 'Ryan', 'Nora', 'Henry', 'Ella', 'Jack', 'Lily']
 const LAST = ['Carter', 'Nguyen', 'Patel', 'Walsh', 'Brennan', 'Okafor', 'Lindqvist', 'Moreno', 'Fraser', 'Kim', 'Duarte', 'Shaw', 'Hughes', 'Rossi', 'Tanaka', 'Murphy', 'Becker', 'Lopez', 'Reid', 'Silva', 'Ahmed', 'Grant', 'Cole', 'Price']
@@ -138,8 +155,15 @@ function seedField(t: Tournament, count: number, includeMe: boolean) {
       paymentStatus: 'paid',
     })
   }
+  // Four-Ball pairs and scramble teams: partners sit next to each other in the field
+  const size = teamSizeOf(t)
+  if (size > 1) entries.forEach((e, i) => { e.teamId = `${t.id}-team${Math.floor(i / size) + 1}` })
   return entries
 }
+
+/** Players per team: 2 for Four-Ball, the tournament's team size for a scramble (4 by default), 1 otherwise */
+export const teamSizeOf = (t: Tournament) =>
+  t.format === 'Four-Ball' || t.format === 'Scramble' ? t.team?.size ?? (t.format === 'Scramble' ? 4 : 2) : 1
 
 function seed(): LiveData {
   const fresh: LiveData = { entries: [], groups: [], scores: {}, cardState: {}, shots: {} }
@@ -151,7 +175,7 @@ function seed(): LiveData {
     const includeMe = t.registrationStatus === 'registered' || t.status === 'in-progress'
     fresh.entries.push(...seedField(t, fieldSize - (includeMe ? 1 : 0), includeMe))
     if (live) {
-      generateTeeSheet(t, 1, false)
+      for (const r of t.rounds ?? [{ number: 1 }]) generateTeeSheet(t, r.number, false)
       const course = getCourse(t.courseId)
       if (!course) continue
       const holes = roundHoles(t, course, 1)
@@ -168,6 +192,16 @@ function seed(): LiveData {
         const card = holes.map((h, i) => (i < played ? simulatedScore(`${e.id}-${h.hole}`, h, e.handicapIndex) : null))
         ;((fresh.scores[t.id] ??= {})[e.id] ??= {})[1] = card
         if (t.status === 'completed') ((fresh.cardState[t.id] ??= {})[e.id] ??= {})[1] = 'verified'
+      }
+      // A finished event is fully scored: every round of every card, all verified
+      if (t.status === 'completed') {
+        for (const r of (t.rounds ?? []).slice(1)) {
+          const later = roundHoles(t, course, r.number)
+          for (const e of entriesFor(t.id)) {
+            ;((fresh.scores[t.id] ??= {})[e.id] ??= {})[r.number] = later.map(h => simulatedScore(`${e.id}-r${r.number}-${h.hole}`, h, e.handicapIndex))
+            ;((fresh.cardState[t.id] ??= {})[e.id] ??= {})[r.number] = 'verified'
+          }
+        }
       }
     }
   }
@@ -309,7 +343,9 @@ export function generateTeeSheet(t: Tournament, round: number, persist = true) {
   const course = getCourse(t.courseId)
   const sheet = t.teeSheet
   if (!course || !sheet) return
-  const players = entriesFor(t.id).filter(e => e.status === 'registered').sort((a, b) => a.handicapIndex - b.handicapIndex)
+  // Similar handicaps together; partners in Four-Ball and scramble always share a group
+  const players = entriesFor(t.id).filter(e => e.status === 'registered')
+    .sort((a, b) => (a.teamId ?? '').localeCompare(b.teamId ?? '', undefined, { numeric: true }) || a.handicapIndex - b.handicapIndex)
   data.groups = data.groups.filter(g => !(g.tournamentId === t.id && g.round === round))
   for (let i = 0; i * sheet.groupSize < players.length; i++) {
     const { time, startHole } = teeTimeFor(sheet, i, roundHoles(t, course, round).length)
@@ -327,6 +363,20 @@ export function generateTeeSheet(t: Tournament, round: number, persist = true) {
 
 export const groupOf = (tournamentId: string, round: number, entryId: string) =>
   groupsFor(tournamentId, round).find(g => g.entryIds.includes(entryId))
+
+/**
+ * The group playing right behind this player's group: the next tee time from the same starting hole,
+ * or in a shotgun start the group that began on the hole before ours.
+ */
+export function groupBehind(tournamentId: string, round: number, entryId: string) {
+  const all = groupsFor(tournamentId, round)
+  const mine = all.find(g => g.entryIds.includes(entryId))
+  if (!mine) return undefined
+  const next = all.filter(g => g.startHole === mine.startHole && g.time > mine.time).sort((a, b) => a.time.localeCompare(b.time))[0]
+  if (next) return next
+  const last = Math.max(...all.map(g => g.startHole))
+  return all.find(g => g !== mine && g.time === mine.time && g.startHole === (mine.startHole === 1 ? last : mine.startHole - 1))
+}
 
 /* ───────── Scorecards ───────── */
 
@@ -352,14 +402,63 @@ export function setCardState(tournamentId: string, entryId: string, round: numbe
   save()
 }
 
-/** Plays the next hole for everyone still on the course except the signed-in golfer. */
-export function simulateTick(t: Tournament, round = 1) {
+/* ───────── Player status and play suspension (set by tournament officials; audit trail in ops.ts) ───────── */
+
+/**
+ * Exceptions an official records per player and round (client answers, Sept 21): withdrew, didn't show,
+ * didn't finish, disqualified. Holes already played stay on the card; the player drops out of the
+ * results but is never deleted.
+ */
+export type RoundStatus = 'playing' | 'wd' | 'no-show' | 'dnf' | 'dq'
+
+export const ROUND_STATUS_LABEL: Record<RoundStatus, string> = {
+  playing: 'Playing', wd: 'Withdrew', 'no-show': 'No show', dnf: 'Did not finish', dq: 'Disqualified',
+}
+/** Short code for the position column */
+export const ROUND_STATUS_CODE: Record<RoundStatus, string> = { playing: '', wd: 'WD', 'no-show': 'NS', dnf: 'DNF', dq: 'DQ' }
+
+export const roundStatus = (tournamentId: string, entryId: string, round: number): RoundStatus =>
+  data.roundStatus?.[tournamentId]?.[entryId]?.[round] ?? 'playing'
+
+export function setRoundStatus(tournamentId: string, entryId: string, round: number, status: RoundStatus) {
+  ;(((data.roundStatus ??= {})[tournamentId] ??= {})[entryId] ??= {})[round] = status
+  save()
+}
+
+/** Play stopped by an official (lightning, heavy rain, darkness). Scoring screens show it until play resumes. */
+export interface Suspension { reason: string; note?: string; by: string; at: string }
+
+export const suspensionFor = (tournamentId: string): Suspension | undefined => data.suspended?.[tournamentId]
+
+export function setSuspension(tournamentId: string, s: Suspension | undefined) {
+  data.suspended ??= {}
+  if (s) data.suspended[tournamentId] = s
+  else delete data.suspended[tournamentId]
+  save()
+}
+
+/** Demo only: plays out the round for everyone still playing and hands in their cards, so results can be signed off. */
+export function finishRoundForDemo(t: Tournament, round = 1) {
   const course = getCourse(t.courseId)
   if (!course || t.status !== 'in-progress') return
   const holes = roundHoles(t, course, round)
+  for (const e of entriesFor(t.id)) {
+    if (e.status !== 'registered' || roundStatus(t.id, e.id, round) !== 'playing') continue
+    const card = cardFor(t, e.id, round).map((s, i) => s ?? simulatedScore(`${e.id}-${holes[i].hole}-live${round > 1 ? `-r${round}` : ''}`, holes[i], e.handicapIndex))
+    ;((data.scores[t.id] ??= {})[e.id] ??= {})[round] = card
+    if (cardState(t.id, e.id, round) === 'in-progress') ((data.cardState[t.id] ??= {})[e.id] ??= {})[round] = 'submitted'
+  }
+  save()
+}
+
+/** Plays the next hole for everyone still on the course except the signed-in golfer. */
+export function simulateTick(t: Tournament, round = 1) {
+  const course = getCourse(t.courseId)
+  if (!course || t.status !== 'in-progress' || suspensionFor(t.id)) return
+  const holes = roundHoles(t, course, round)
   let changed = false
   for (const e of entriesFor(t.id)) {
-    if (e.isMe || cardState(t.id, e.id, round) !== 'in-progress') continue
+    if (e.isMe || cardState(t.id, e.id, round) !== 'in-progress' || roundStatus(t.id, e.id, round) !== 'playing') continue
     const card = cardFor(t, e.id, round)
     const next = card.findIndex(s => s === null)
     if (next < 0 || rand(`${e.id}-${next}-${Date.now() >> 14}`) < 0.35) continue
@@ -400,6 +499,8 @@ export interface LeaderboardRow {
   points: number
   playing: number
   state: CardState
+  /** Anything but 'playing' leaves the player out of the results */
+  status: RoundStatus
 }
 
 export function leaderboard(t: Tournament, round = 1, divisionId?: string): LeaderboardRow[] {
@@ -429,20 +530,23 @@ export function leaderboard(t: Tournament, round = 1, divisionId?: string): Lead
         entry, position: '', thru, holes: holes.length, gross, grossToPar: gross - par,
         net: gross - received, netToPar: gross - received - par, points, playing,
         state: cardState(t.id, entry.id, round),
+        status: roundStatus(t.id, entry.id, round),
       }
     })
 
   const stableford = t.format === 'Stableford'
   const useNet = !stableford && t.scoring?.basis === 'net'
   const key = (r: LeaderboardRow) => (stableford ? -r.points : useNet ? r.netToPar : r.grossToPar)
-  rows.sort((a, b) => (a.thru === 0 ? 1 : 0) - (b.thru === 0 ? 1 : 0) || key(a) - key(b) || b.thru - a.thru)
+  const out = (r: LeaderboardRow) => (r.status !== 'playing' ? 1 : 0)
+  rows.sort((a, b) => out(a) - out(b) || (a.thru === 0 ? 1 : 0) - (b.thru === 0 ? 1 : 0) || key(a) - key(b) || b.thru - a.thru)
 
-  rows.forEach((row, i) => {
+  const ranked = rows.filter(r => !out(r) && r.thru > 0)
+  rows.forEach(row => {
+    if (out(row)) { row.position = ROUND_STATUS_CODE[row.status]; return }
     if (row.thru === 0) { row.position = '–'; return }
-    const same = rows.filter(r => r.thru > 0 && key(r) === key(row)).length
-    const first = rows.findIndex(r => r.thru > 0 && key(r) === key(row))
+    const same = ranked.filter(r => key(r) === key(row)).length
+    const first = ranked.findIndex(r => key(r) === key(row))
     row.position = `${same > 1 ? 'T' : ''}${first + 1}`
-    void i
   })
   return rows
 }
@@ -452,8 +556,20 @@ export function leaderboard(t: Tournament, round = 1, divisionId?: string): Lead
 ;(function load() {
   try {
     localStorage.removeItem('gtp-live-v1') // before role-based screens
+    localStorage.removeItem('gtp-live-v2') // before Four-Ball and scramble teams
+    localStorage.removeItem('gtp-live-v3') // before tee sheets for later rounds
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) { data = JSON.parse(raw); return }
   } catch { /* fall through to seed */ }
   data = seed()
 })()
+
+// Another tab changed scores, statuses or suspended play: show it here too, as a real backend would push it
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', e => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return
+    try { data = JSON.parse(e.newValue) } catch { return }
+    version++
+    listeners.forEach(l => l())
+  })
+}

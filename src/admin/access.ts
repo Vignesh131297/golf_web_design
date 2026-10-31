@@ -150,6 +150,10 @@ export interface AdminUser {
   jobTitle?: string
   /** Opted in to product news (CASL: separate, unticked opt-in) */
   marketingOptIn?: boolean
+  /** The same person also plays: one login opens their golfer account and this console (client, 21 Oct) */
+  alsoGolfer?: boolean
+  /** Optional photo ID for organisers (verified tick) */
+  idCheck?: { document: string; fileName: string; status: 'checking' | 'verified'; at: string }
 }
 
 export type OrgStatus = 'pending' | 'approved' | 'rejected' | 'suspended'
@@ -275,6 +279,8 @@ const DEFAULT_USERS: AdminUser[] = [
   { id: 'u-savannah-staff', name: 'Leo Park', email: 'leo@savannahgolf.com', password: 'leo', roleId: 'o-savannah-event-staff', organizationId: 'o-savannah', active: true },
   // Runs the live club championship (t8), with a marshal and an official on duty
   { id: 'u-augusta', name: 'Dana Whitfield', email: 'dana@augustapines.com', password: 'augusta', roleId: ORGANIZER_ROLE_ID, organizationId: 'o-augusta', active: true, jobTitle: 'Tournament Director' },
+  // The demo golfer is also on the Augusta Pines committee: organisers often play in their own events
+  { id: 'u-augusta-alex', name: 'Alexander Hartwell', email: 'alex.hartwell@golfclub.com', password: 'golfer', roleId: ORGANIZER_ROLE_ID, organizationId: 'o-augusta', active: true, jobTitle: 'Committee member', alsoGolfer: true },
   // Pending organisation
   { id: 'u-coastal', name: 'Nadia Brooks', email: 'hello@coastalcharity.org', password: 'coastal', roleId: ORGANIZER_ROLE_ID, organizationId: 'o-coastal', active: true },
 ]
@@ -342,6 +348,21 @@ function commit() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, orgs })) } catch { /* session-only */ }
   version++
   listeners.forEach(l => l())
+}
+
+// Another tab changed an account (a new password, say): pick it up, as a real backend would
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', e => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return
+    try {
+      const saved = JSON.parse(e.newValue) as { roles?: Role[]; users?: AdminUser[]; orgs?: Organization[] }
+      if (saved.roles) roles = saved.roles
+      if (saved.users) users = saved.users
+      if (saved.orgs) orgs = saved.orgs
+    } catch { return }
+    version++
+    listeners.forEach(l => l())
+  })
 }
 
 export function useAccessVersion() {
@@ -576,6 +597,7 @@ export interface OrganizerSignup {
   password: string
   jobTitle?: string
   marketingOptIn?: boolean
+  idCheck?: AdminUser['idCheck']
   org: Omit<Organization, 'id' | 'status' | 'statusReason' | 'ownerUserId' | 'createdAt' | 'emailVerified' | 'decisions'>
 }
 
@@ -603,7 +625,7 @@ export function registerOrganizer(input: OrganizerSignup): Result & { userId?: s
   users = [...users, {
     id: userId, name: input.fullName.trim(), email, password: input.password,
     roleId: ORGANIZER_ROLE_ID, organizationId: org.id, active: true,
-    jobTitle: input.jobTitle?.trim() || undefined, marketingOptIn: !!input.marketingOptIn,
+    jobTitle: input.jobTitle?.trim() || undefined, marketingOptIn: !!input.marketingOptIn, idCheck: input.idCheck,
   }]
   commit()
   return { ok: true, userId }
@@ -659,6 +681,7 @@ export function reviewChecklist(org: Organization) {
   const duplicate = orgs.find(o => o.id !== org.id && o.name.trim().toLowerCase() === org.name.trim().toLowerCase() && o.city.trim().toLowerCase() === org.city.trim().toLowerCase())
   return [
     { label: 'Owner email verified', ok: !!org.emailVerified },
+    { label: owner?.idCheck ? `Owner’s photo ID verified (${owner.idCheck.document})` : 'Owner didn’t upload a photo ID (optional)', ok: !!owner?.idCheck },
     { label: site ? `Owner email matches the website (${site})` : 'No website to match the owner email against', ok: !!site && !!emailDomain && (emailDomain === site || emailDomain.endsWith(`.${site}`)) },
     { label: org.registrationNumber || org.golfCanadaId ? 'Registration number or Golf Canada ID given' : 'No registration number or Golf Canada ID', ok: !!(org.registrationNumber || org.golfCanadaId) },
     { label: duplicate ? `Possible duplicate: ${duplicate.name} (${duplicate.status})` : 'No other organisation with this name in the same city', ok: !duplicate },
@@ -668,6 +691,10 @@ export function reviewChecklist(org: Organization) {
 /* ───────── Tournament visibility ───────── */
 
 /** Golfers only see published events from the platform or from approved organisations */
+/** The organiser login that belongs to a golfer, when they also run tournaments */
+export const organiserLoginFor = (email: string) =>
+  users.find(u => u.alsoGolfer && u.active && u.email.toLowerCase() === email.trim().toLowerCase())
+
 export function isPublicTournament(t: Tournament) {
   if (t.status === 'draft') return false
   if (!t.organizerId) return true
@@ -700,29 +727,15 @@ export function canChangeCourse(actor: AdminUser | undefined, course: { organize
 
 /* ───────── Sign-in ───────── */
 
-/** 'unknown' = no console account with this email (prototype: the sign-in screen then signs in a mock golfer) */
-export type AuthFailure = 'unknown' | 'invalid' | 'inactive' | 'org-rejected' | 'org-suspended' | 'locked'
-
-/** Wrong-password counts per email; 5 in a row locks sign-in for 15 minutes (session only in the prototype) */
-const failures = new Map<string, { count: number; until?: number }>()
-const LOCK_AFTER = 5
-const LOCK_MS = 15 * 60_000
+/** 'unknown' = no console account with this email. Wrong-password counts and the lock-out are in ops.ts, shared by every login. */
+export type AuthFailure = 'unknown' | 'invalid' | 'inactive' | 'org-rejected' | 'org-suspended'
 
 export function authenticate(email: string, password: string):
   { ok: true; user: AdminUser } | { ok: false; reason: AuthFailure; detail?: string } {
   const key = email.trim().toLowerCase()
-  const f = failures.get(key)
-  if (f?.until && f.until > Date.now()) return { ok: false, reason: 'locked', detail: String(Math.ceil((f.until - Date.now()) / 60_000)) }
   const user = users.find(u => u.email.toLowerCase() === key)
   if (!user) return { ok: false, reason: 'unknown' }
-  if (user.password !== password) {
-    // Prototype: golfers sign in through a separate mock, so only console accounts are counted here.
-    // A real backend counts every email, so the answer never reveals whether an account exists.
-    const count = (f?.until ? 0 : f?.count ?? 0) + 1
-    failures.set(key, count >= LOCK_AFTER ? { count, until: Date.now() + LOCK_MS } : { count })
-    return count >= LOCK_AFTER ? { ok: false, reason: 'locked', detail: '15' } : { ok: false, reason: 'invalid' }
-  }
-  failures.delete(key)
+  if (user.password !== password) return { ok: false, reason: 'invalid' }
   if (!user.active) return { ok: false, reason: 'inactive' }
   const org = getOrganization(user.organizationId)
   if (org?.status === 'rejected') return { ok: false, reason: 'org-rejected', detail: org.statusReason }
@@ -732,12 +745,18 @@ export function authenticate(email: string, password: string):
   return { ok: true, user }
 }
 
+/** Forgot password: the account owner sets a new one with a code */
+export function setPasswordByEmail(email: string, password: string) {
+  const key = email.trim().toLowerCase()
+  users = users.map(u => (u.email.toLowerCase() === key ? { ...u, password } : u))
+  commit()
+}
+
 export function authFailureMessage(r: { reason: AuthFailure; detail?: string }) {
   switch (r.reason) {
     case 'inactive':      return 'This admin account has been deactivated. Contact your administrator.'
     case 'org-rejected':  return `Your organiser application was not approved${r.detail ? `: ${r.detail}` : '.'}`
     case 'org-suspended': return `Your organisation has been suspended${r.detail ? `: ${r.detail}` : '.'} Contact support.`
-    case 'locked':        return `Too many wrong passwords. Try again in ${r.detail ?? 15} minute${r.detail === '1' ? '' : 's'}.`
     default:              return 'Invalid email or password'
   }
 }

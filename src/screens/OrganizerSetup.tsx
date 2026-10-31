@@ -6,6 +6,7 @@ import { navigate } from '../router'
 import { MOCK_COURSES } from '../data'
 import { ORG_TYPES, EVENTS_PER_YEAR, FIELD_SIZES, registerOrganizer, type OrgType } from '../admin/access'
 import { COUNTRIES, postalCodeError } from '../account-rules'
+import { IdentityUpload, settledId, type IdCheck } from '../verification'
 import { Textarea } from '../admin/forms'
 
 /*
@@ -68,6 +69,7 @@ export default function OrganizerSetup() {
   const [city, setCity]         = useState('')
   const [region, setRegion]     = useState('')
   const [postal, setPostal]     = useState('')
+  const [idCheck, setIdCheck]   = useState<IdCheck | undefined>()
   const [country, setCountry]   = useState('Canada')
   const [regNumber, setRegNo]   = useState('')
   const [gcId, setGcId]         = useState('')
@@ -98,9 +100,7 @@ export default function OrganizerSetup() {
     if (!EMAIL_RE.test(email.trim())) e.email = 'Enter a valid contact email'
     if (phone.replace(/\D/g, '').length < 7) e.phone = 'Enter a valid phone number'
     if (website.trim() && !URLISH.test(website.trim().replace(/^https?:\/\//, ''))) e.website = 'Enter a website like yourclub.com'
-    if (!street.trim()) e.street = 'Enter the street address'
-    if (!city.trim()) e.city = 'Enter the city'
-    if (!region.trim()) e.region = 'Enter the province or state'
+    // Postal code is required; street, city and province are optional (client, 21 Oct call)
     if (!postal.trim()) e.postal = 'Enter the postal / ZIP code'
     else { const p = postalCodeError(country, postal); if (p) e.postal = p }
     return e
@@ -133,6 +133,7 @@ export default function OrganizerSetup() {
         password: basics!.password!,
         jobTitle: basics!.jobTitle,
         marketingOptIn: basics!.marketingOptIn,
+        idCheck: settledId(idCheck),
         org: {
           name: name.trim(),
           type: type as OrgType,
@@ -240,11 +241,11 @@ export default function OrganizerSetup() {
                 <Input label="Website (optional)" placeholder="yourclub.com" value={website} onChange={e => field(setWebsite, 'website')(e.target.value)} error={errors.website} />
               </Section>
 
-              <Section id="org-address" title="Address">
-                <Input label="Street address *" value={street} onChange={e => field(setStreet, 'street')(e.target.value)} error={errors.street} />
+              <Section id="org-address" title="Address" hint="Only the postal code is required">
+                <Input label="Street address (optional)" value={street} onChange={e => field(setStreet, 'street')(e.target.value)} error={errors.street} />
                 <div className="grid sm:grid-cols-2 gap-5">
-                  <Input label="City *" value={city} onChange={e => field(setCity, 'city')(e.target.value)} error={errors.city} />
-                  <Input label="Province / state *" value={region} onChange={e => field(setRegion, 'region')(e.target.value)} error={errors.region} />
+                  <Input label="City (optional)" value={city} onChange={e => field(setCity, 'city')(e.target.value)} error={errors.city} />
+                  <Input label="Province / state (optional)" value={region} onChange={e => field(setRegion, 'region')(e.target.value)} error={errors.region} />
                   <Input label="Postal / ZIP code *" value={postal} onChange={e => field(setPostal, 'postal')(e.target.value.toUpperCase())} error={errors.postal} />
                   <SelectField label="Country *" value={country} onChange={v => { setCountry(v); clear('postal') }} options={COUNTRIES} />
                 </div>
@@ -255,6 +256,10 @@ export default function OrganizerSetup() {
                   <Input label="Business / charity registration number" placeholder="e.g. CRA 123456789 RR0001" value={regNumber} onChange={e => setRegNo(e.target.value)} />
                   <Input label="Golf Canada club / facility ID" value={gcId} onChange={e => setGcId(e.target.value)} />
                 </div>
+              </Section>
+
+              <Section id="org-id" title="Your identity" hint="Optional — a verified organiser gets approved faster">
+                <IdentityUpload value={idCheck} onChange={setIdCheck} who="organiser" />
               </Section>
 
               <Section id="org-events" title="About your events" hint="Optional — helps us set up your account">
@@ -281,7 +286,7 @@ export default function OrganizerSetup() {
                 ['Address', [street, city, region, postal.toUpperCase(), country].filter(Boolean).join(', ')],
               ]} />
               <ReviewCard title="Verification & events" onEdit={() => editSection('org-verify')} rows={[
-                ['Registration number', regNumber], ['Golf Canada ID', gcId],
+                ['Registration number', regNumber], ['Golf Canada ID', gcId], ['Photo ID', idCheck ? `${idCheck.document} uploaded` : 'Not added'],
                 ['Home course', courseName ?? (homeCourse === NO_COURSE ? 'Add later' : '')],
                 ['Tournaments per year', events], ['Typical field size', fieldSize],
               ]} />
