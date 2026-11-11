@@ -148,6 +148,13 @@ export function CourseWizard({ id }: { id: string | null }) {
   return (
     <div className="page-in max-w-[1180px]">
       <BackLink label="Courses" onClick={cancel} />
+      {c.source && (
+        <p className="mb-4 rounded-2xl bg-canvas px-4 py-3 text-[13px] text-gray-600">
+          <span className="font-bold text-ink">Imported from {c.source.provider}</span> · {c.source.providerCourseId} · {c.source.importedAt.slice(0, 10)} by {c.source.importedBy}
+          {c.source.refreshedAt ? ` · last updated from the provider ${c.source.refreshedAt.slice(0, 10)}` : ''}{c.source.filledByHand ? ` · fixed by hand: ${c.source.filledByHand.join(', ')}` : ''}.
+          {' '}Edits you make here stay with this course; <a className="underline" href="#/admin/courses/import">update from the provider</a> to pull their latest data.
+        </p>
+      )}
       <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
         <div>
           <p className="text-[14px] text-gray-500 font-medium">{isNew ? 'Create course' : readOnly ? 'View course' : 'Edit course'}{c.facilityName && c.facilityName !== c.name ? ` · ${c.facilityName}` : ''}</p>

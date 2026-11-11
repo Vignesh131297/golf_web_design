@@ -15,7 +15,7 @@ import { withCourseDefaults, withTournamentDefaults } from './golf'
 
 // v3: full course/tournament set-up (tee sets, hole maps, rounds, scoring, fees, tee sheet…)
 // v4: role-based screens (organiser t1/t8, marshal and official slots) need the new seed
-const STORAGE_KEY = 'gtp-admin-data-v5'
+const STORAGE_KEY = 'gtp-admin-data-v6' // v6: Sprint 4 demo events t9, t10
 
 // Pristine copies for "Reset demo data"
 const DEFAULT_TOURNAMENTS: Tournament[] = structuredClone(MOCK_TOURNAMENTS)

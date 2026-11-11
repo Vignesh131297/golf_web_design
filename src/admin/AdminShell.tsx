@@ -109,7 +109,7 @@ export function IconTrash() {
 const NAV = [
   { label: 'Dashboard',   href: '#/admin',             Icon: IconDashboard, match: ['admin'] },
   { label: 'Tournaments', href: '#/admin/tournaments', Icon: IconTrophy,    match: ['admin-tournaments', 'admin-tournament-edit', 'admin-tournament-live'] },
-  { label: 'Courses',     href: '#/admin/courses',     Icon: IconFlag,      match: ['admin-courses', 'admin-course-edit'] },
+  { label: 'Courses',     href: '#/admin/courses',     Icon: IconFlag,      match: ['admin-courses', 'admin-course-edit', 'admin-course-import'] },
   { label: 'Organisation', href: '#/admin/organisation', Icon: IconBuilding, match: ['admin-organisation'] },
   { label: 'Organizers',  href: '#/admin/organizers',  Icon: IconBuilding,  match: ['admin-organizers'] },
   { label: 'Roles & permissions', href: '#/admin/roles', Icon: IconShield,   match: ['admin-roles', 'admin-role-edit'] },

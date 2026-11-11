@@ -80,10 +80,18 @@ interface LiveData {
   roundStatus?: Record<string, Record<string, Record<number, RoundStatus>>>
   /** suspended[tournamentId]: play stopped by an official */
   suspended?: Record<string, Suspension>
+  /**
+   * Sprint 4 · SC1: pickups[tournamentId][entryId][round] = hole indexes the player picked up on (no hole-out).
+   * Stableford only. The stroke count stays null — a pickup is never stored as a made-up number — but the hole
+   * counts as played and scores 0 points. A null score without a pickup is still a missing score.
+   */
+  pickups?: Record<string, Record<string, Record<number, number[]>>>
+  /** Sprint 4 · SC3: scramble team card — who entered each hole: teamEntry[tournamentId][teamId][round][holeIndex] */
+  teamEntry?: Record<string, Record<string, Record<number, Record<number, { by: string; at: string }>>>>
 }
 
 // v2: entries carry registeredBy / paymentStatus; groups seeded for pace of play
-const STORAGE_KEY = 'gtp-live-v4'
+const STORAGE_KEY = 'gtp-live-v5' // v5: Sprint 4 pickups, scramble team card, demo events
 
 const FIRST = ['James', 'Olivia', 'Liam', 'Emma', 'Noah', 'Ava', 'Ethan', 'Sophia', 'Lucas', 'Mia', 'Mason', 'Isla', 'Logan', 'Grace', 'Owen', 'Chloe', 'Caleb', 'Zoe', 'Ryan', 'Nora', 'Henry', 'Ella', 'Jack', 'Lily']
 const LAST = ['Carter', 'Nguyen', 'Patel', 'Walsh', 'Brennan', 'Okafor', 'Lindqvist', 'Moreno', 'Fraser', 'Kim', 'Duarte', 'Shaw', 'Hughes', 'Rossi', 'Tanaka', 'Murphy', 'Becker', 'Lopez', 'Reid', 'Silva', 'Ahmed', 'Grant', 'Cole', 'Price']
@@ -380,20 +388,87 @@ export function groupBehind(tournamentId: string, round: number, entryId: string
 
 /* ───────── Scorecards ───────── */
 
+/**
+ * Sprint 4 · SC3: a scramble team keeps ONE card per round. It's stored on the team's first player (the
+ * "card holder"); every member reads and writes that same card, so member views and standings always agree.
+ */
+export function cardHolderId(t: Tournament, entryId: string): string {
+  if (t.format !== 'Scramble') return entryId
+  const e = data.entries.find(x => x.id === entryId)
+  if (!e?.teamId) return entryId
+  return data.entries.find(x => x.tournamentId === t.id && x.teamId === e.teamId && x.status === 'registered')?.id ?? entryId
+}
+
 export function cardFor(t: Tournament, entryId: string, round: number): (number | null)[] {
   const course = getCourse(t.courseId)
   const length = course ? roundHoles(t, course, round).length : 18
-  const card = data.scores[t.id]?.[entryId]?.[round] ?? []
+  const card = data.scores[t.id]?.[cardHolderId(t, entryId)]?.[round] ?? []
   return Array.from({ length }, (_, i) => card[i] ?? null)
 }
 
 export const cardState = (tournamentId: string, entryId: string, round: number): CardState =>
   data.cardState[tournamentId]?.[entryId]?.[round] ?? 'in-progress'
 
-export function setStrokes(t: Tournament, entryId: string, round: number, holeIndex: number, strokes: number | null) {
+/* ── Sprint 4 · SC1: Stableford pickups ── */
+
+/** Only Stableford has pickups; stroke play must hole out on every hole */
+export const pickupAllowed = (t: Pick<Tournament, 'format'>) => t.format === 'Stableford'
+
+export function pickupsFor(t: Tournament, entryId: string, round: number): Set<number> {
+  if (!pickupAllowed(t)) return new Set()
+  return new Set(data.pickups?.[t.id]?.[cardHolderId(t, entryId)]?.[round] ?? [])
+}
+
+export const isPickup = (t: Tournament, entryId: string, round: number, holeIndex: number) => pickupsFor(t, entryId, round).has(holeIndex)
+
+/** What the player recorded on a hole: strokes, a pickup ('P'), or nothing yet */
+export type HoleOutcome = number | 'P' | null
+export function outcomesFor(t: Tournament, entryId: string, round: number): HoleOutcome[] {
+  const picks = pickupsFor(t, entryId, round)
+  return cardFor(t, entryId, round).map((s, i) => (picks.has(i) ? 'P' : s))
+}
+
+function writePickup(t: Tournament, entryId: string, round: number, holeIndex: number, on: boolean) {
+  const holder = cardHolderId(t, entryId)
+  const list = (((data.pickups ??= {})[t.id] ??= {})[holder] ??= {})[round] ??= []
+  const at = list.indexOf(holeIndex)
+  if (on && at < 0) list.push(holeIndex)
+  if (!on && at >= 0) list.splice(at, 1)
+}
+
+/** Records a pickup: the stroke count is cleared (never set to 0) and the hole scores 0 points */
+export function setPickup(t: Tournament, entryId: string, round: number, holeIndex: number, by?: string) {
+  if (!pickupAllowed(t)) return false
+  const holder = cardHolderId(t, entryId)
+  const card = cardFor(t, entryId, round)
+  card[holeIndex] = null
+  ;((data.scores[t.id] ??= {})[holder] ??= {})[round] = card
+  writePickup(t, entryId, round, holeIndex, true)
+  noteTeamEntry(t, entryId, round, holeIndex, by)
+  save()
+  return true
+}
+
+function noteTeamEntry(t: Tournament, entryId: string, round: number, holeIndex: number, by?: string) {
+  const e = data.entries.find(x => x.id === entryId)
+  if (t.format !== 'Scramble' || !e?.teamId) return
+  ;(((data.teamEntry ??= {})[t.id] ??= {})[e.teamId] ??= {})[round] ??= {}
+  data.teamEntry[t.id][e.teamId][round][holeIndex] = { by: by ?? e.name, at: new Date().toISOString().slice(0, 19) }
+}
+
+/** Scramble: who last entered the team score on a hole */
+export function teamEntryFor(t: Tournament, entryId: string, round: number, holeIndex: number) {
+  const e = data.entries.find(x => x.id === entryId)
+  return e?.teamId ? data.teamEntry?.[t.id]?.[e.teamId]?.[round]?.[holeIndex] : undefined
+}
+
+export function setStrokes(t: Tournament, entryId: string, round: number, holeIndex: number, strokes: number | null, by?: string) {
+  const holder = cardHolderId(t, entryId)
   const card = cardFor(t, entryId, round)
   card[holeIndex] = strokes
-  ;((data.scores[t.id] ??= {})[entryId] ??= {})[round] = card
+  ;((data.scores[t.id] ??= {})[holder] ??= {})[round] = card
+  writePickup(t, entryId, round, holeIndex, false)
+  noteTeamEntry(t, entryId, round, holeIndex, by)
   save()
 }
 
@@ -444,8 +519,9 @@ export function finishRoundForDemo(t: Tournament, round = 1) {
   const holes = roundHoles(t, course, round)
   for (const e of entriesFor(t.id)) {
     if (e.status !== 'registered' || roundStatus(t.id, e.id, round) !== 'playing') continue
-    const card = cardFor(t, e.id, round).map((s, i) => s ?? simulatedScore(`${e.id}-${holes[i].hole}-live${round > 1 ? `-r${round}` : ''}`, holes[i], e.handicapIndex))
-    ;((data.scores[t.id] ??= {})[e.id] ??= {})[round] = card
+    const picked = pickupsFor(t, e.id, round)
+    const card = cardFor(t, e.id, round).map((s, i) => picked.has(i) ? null : s ?? simulatedScore(`${e.id}-${holes[i].hole}-live${round > 1 ? `-r${round}` : ''}`, holes[i], e.handicapIndex))
+    ;((data.scores[t.id] ??= {})[cardHolderId(t, e.id)] ??= {})[round] = card
     if (cardState(t.id, e.id, round) === 'in-progress') ((data.cardState[t.id] ??= {})[e.id] ??= {})[round] = 'submitted'
   }
   save()
@@ -460,10 +536,11 @@ export function simulateTick(t: Tournament, round = 1) {
   for (const e of entriesFor(t.id)) {
     if (e.isMe || cardState(t.id, e.id, round) !== 'in-progress' || roundStatus(t.id, e.id, round) !== 'playing') continue
     const card = cardFor(t, e.id, round)
-    const next = card.findIndex(s => s === null)
+    const picked = pickupsFor(t, e.id, round)
+    const next = card.findIndex((s, i) => s === null && !picked.has(i))
     if (next < 0 || rand(`${e.id}-${next}-${Date.now() >> 14}`) < 0.35) continue
     card[next] = simulatedScore(`${e.id}-${holes[next].hole}-live`, holes[next], e.handicapIndex)
-    ;((data.scores[t.id] ??= {})[e.id] ??= {})[round] = card
+    ;((data.scores[t.id] ??= {})[cardHolderId(t, e.id)] ??= {})[round] = card
     changed = true
   }
   if (changed) save()
@@ -497,6 +574,8 @@ export interface LeaderboardRow {
   net: number
   netToPar: number
   points: number
+  /** Sprint 4 · SC1: holes picked up (Stableford) — played, 0 points, no stroke count */
+  pickups: number
   playing: number
   state: CardState
   /** Anything but 'playing' leaves the player out of the results */
@@ -518,8 +597,10 @@ export function leaderboard(t: Tournament, round = 1, divisionId?: string): Lead
       // Nine-hole rounds get half the strokes
       const playing = holes.length === 9 ? Math.round(fullPlaying / 2) : fullPlaying
       const card = cardFor(t, entry.id, round)
+      const picks = pickupsFor(t, entry.id, round)
       let gross = 0, par = 0, received = 0, points = 0, thru = 0
       card.forEach((strokes, i) => {
+        if (picks.has(i)) { thru++; return }
         if (strokes === null) return
         const hole = holes[i]
         const r = strokesOnHole(playing, holes.length === 9 ? Math.ceil(hole.handicap / 2) : hole.handicap, holes.length)
@@ -528,7 +609,7 @@ export function leaderboard(t: Tournament, round = 1, divisionId?: string): Lead
       })
       return {
         entry, position: '', thru, holes: holes.length, gross, grossToPar: gross - par,
-        net: gross - received, netToPar: gross - received - par, points, playing,
+        net: gross - received, netToPar: gross - received - par, points, pickups: picks.size, playing,
         state: cardState(t.id, entry.id, round),
         status: roundStatus(t.id, entry.id, round),
       }

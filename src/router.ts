@@ -23,6 +23,7 @@ export type Route =
   | { name: 'admin-tournament-live'; id: string }
   | { name: 'admin-courses' }
   | { name: 'admin-course-edit'; id: string | null }
+  | { name: 'admin-course-import' }
   | { name: 'admin-roles' }
   | { name: 'admin-role-edit'; id: string | null }
   | { name: 'admin-users' }
@@ -44,6 +45,7 @@ export function parseHash(hash: string): Route {
     if (b === 'tournaments' && c && parts[3] === 'live') return { name: 'admin-tournament-live', id: c }
     if (b === 'tournaments' && c) return { name: 'admin-tournament-edit', id: c === 'new' ? null : c }
     if (b === 'courses' && !c) return { name: 'admin-courses' }
+    if (b === 'courses' && c === 'import') return { name: 'admin-course-import' }
     if (b === 'courses' && c) return { name: 'admin-course-edit', id: c === 'new' ? null : c }
     if (b === 'roles' && !c) return { name: 'admin-roles' }
     if (b === 'roles' && c) return { name: 'admin-role-edit', id: c === 'new' ? null : c }

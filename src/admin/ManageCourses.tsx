@@ -52,7 +52,7 @@ export function AdminCourses() {
       <PageHeader
         eyebrow={adminOrg?.name ?? 'Admin console'}
         title="Courses"
-        actions={<Can perm="courses.create"><Button onClick={() => navigate('/admin/courses/new')}><IconPlus /> New course</Button></Can>}
+        actions={<Can perm="courses.create"><Button variant="secondary" onClick={() => navigate('/admin/courses/import')}>Import from course database</Button><Button onClick={() => navigate('/admin/courses/new')}><IconPlus /> New course</Button></Can>}
       />
 
       {adminOrg && (
@@ -88,6 +88,7 @@ export function AdminCourses() {
                   <p className="text-[11px] font-semibold font-display text-pine-600 mt-0.5">
                     {c.organizerId ? (c.organizerId === adminUser?.organizationId ? 'Added by your organisation' : `Added by ${organizerName(c.organizerId) ?? 'an organiser'}`) : 'Platform course'}
                   </p>
+                  {c.source && <p className="text-[11px] text-gray-400" title={`${c.source.providerCourseId} · imported ${c.source.importedAt.slice(0, 10)} by ${c.source.importedBy}`}>Imported · {c.source.provider}{c.source.refreshedAt ? ` · updated ${c.source.refreshedAt.slice(0, 10)}` : ''}</p>}
                   <p className="text-[12px] text-gray-500 mt-0.5">{c.city}, {c.region}</p>
                   <div className="grid grid-cols-4 gap-1.5 mt-3">
                     {[[c.holes, 'Holes'], [c.par, 'Par'], [c.yardage.toLocaleString(), 'Yds'], [c.slope, 'Slope']].map(([v, l]) => (

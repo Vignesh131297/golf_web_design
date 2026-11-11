@@ -3,6 +3,13 @@
 Desktop / responsive web version of the Golf Tournament mobile UX, using the same design system
 (colours, type, cards, pill buttons, lime accent) and the same mock data.
 
+
+## Sprint 4 (branch `sprint-4`)
+
+Pickups in Stableford, marker confirmation policy + official override, the scramble shared team card, push notification states,
+organiser announcements, operational CSV reports and course import from an external provider.
+What changed and how to try it: [`docs/SPRINT-4-CHANGES.md`](docs/SPRINT-4-CHANGES.md) · API contract: [`docs/api-contract-sprint-4.md`](docs/api-contract-sprint-4.md) ([OpenAPI](docs/openapi-sprint-4.yaml)).
+
 ## Run
 
 ```bash

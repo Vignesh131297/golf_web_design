@@ -131,6 +131,12 @@ export interface ScoringRules {
   lockDate?: string
   /** Holes used for a playoff tie-break */
   playoffHoles?: number[]
+  /**
+   * Sprint 4 · SC2 (S4-D01): 'required' = every counting hole needs the marker's record and no open discrepancies
+   * before a card can be verified (an official may override with a reason). 'optional' = the marker's record is
+   * checked when present. Missing on older tournaments = 'required'.
+   */
+  markerPolicy?: 'required' | 'optional'
 }
 
 export interface Eligibility {
@@ -342,6 +348,24 @@ export interface Course {
   version?: number
   effectiveFrom?: string
   history?: CourseVersion[]
+  /** Sprint 4 · GC6: where an imported course came from. Missing = created by hand. */
+  source?: CourseSource
+}
+
+/** Sprint 4 · GC6: provenance of a course imported from an external provider */
+export interface CourseSource {
+  provider: string
+  providerCourseId: string
+  /** The provider's layout / course id within the facility */
+  layoutId?: string
+  importedAt: string
+  importedBy: string
+  /** Last time the organiser pulled the provider's data again */
+  refreshedAt?: string
+  /** Provider's data version or last-updated stamp, to spot changes on refresh */
+  providerVersion?: string
+  /** Fields the provider didn't have that the organiser filled in or left blank on import */
+  filledByHand?: string[]
 }
 
 export interface GolferProfile {

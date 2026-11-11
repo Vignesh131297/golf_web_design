@@ -2,10 +2,12 @@ import { useSyncExternalStore } from 'react'
 import type { Course, HoleData, Official, Prize, TieBreak, Tournament } from './types'
 import { MOCK_PROFILE, MOCK_TOURNAMENTS, getCourse } from './data'
 import {
-  ROUND_STATUS_CODE, ROUND_STATUS_LABEL, cardFor, cardState, entriesFor, groupsFor, leaderboard, roundHoles, roundStatus, setCardState, setRoundStatus, setStrokes,
-  setSuspension, suspensionFor, teamSizeOf, teeSetIdFor, type CardState, type Entry, type LeaderboardRow, type RoundStatus, type TeeGroup,
+  ROUND_STATUS_CODE, ROUND_STATUS_LABEL, cardFor, cardHolderId, cardState, entriesFor, groupsFor, leaderboard, outcomesFor, pickupAllowed, pickupsFor, roundHoles, roundStatus,
+  setCardState, setPickup, setRoundStatus, setStrokes, setSuspension, suspensionFor, teamSizeOf, teeSetIdFor,
+  type CardState, type Entry, type HoleOutcome, type LeaderboardRow, type RoundStatus, type TeeGroup,
 } from './live'
 import { addMinutes, playingHandicap, scrambleTeamHandicap, stablefordPoints, strokesOnHole, toPar, uid } from './golf'
+import { notifyPlay } from './notify'
 
 /*
  * Tournament-day operations shared by every role (identical copy in the web and mobile prototypes):
@@ -405,23 +407,40 @@ export interface ScoreChange {
   hole: number
   from: number | null
   to: number | null
+  /** Sprint 4 · SC1: the change was to or from a pickup (strokes stay null for a pickup) */
+  fromPickup?: boolean
+  toPickup?: boolean
   reason: string
   by: Actor
   at: string
   incidentId?: string
 }
 
+/** How a score reads in the change log: "5", "pickup" or "blank" */
+export const outcomeText = (v: HoleOutcome | undefined) => (v === 'P' ? 'pickup' : v === null || v === undefined ? 'blank' : String(v))
+
 export const scoreChangesFor = (tournamentId: string, entryId?: string) =>
   data.changes.filter(c => c.tournamentId === tournamentId && (!entryId || c.entryId === entryId)).sort((a, b) => b.at.localeCompare(a.at))
 
 /** Every change to an entered score after the fact goes through here, with a reason. */
-export function correctScore(t: Tournament, entryId: string, round: number, holeIndex: number, to: number | null, reason: string, by: Actor, incidentId?: string) {
-  const from = cardFor(t, entryId, round)[holeIndex]
-  if (from === to) return undefined
+export function correctScore(t: Tournament, entryId: string, round: number, holeIndex: number, to: HoleOutcome, reason: string, by: Actor, incidentId?: string) {
+  const before = outcomesFor(t, entryId, round)[holeIndex]
+  const markerSays = markerOutcomesFor(t, entryId, round)[holeIndex]
+  // No change at all: same score and nothing for the committee to settle with the marker
+  if ((before === to && (markerSays === null || markerSays === to)) || (to === 'P' && !pickupAllowed(t))) return undefined
   const course = getCourse(t.courseId)
   const hole = course ? roundHoles(t, course, round)[holeIndex]?.hole ?? holeIndex + 1 : holeIndex + 1
-  setStrokes(t, entryId, round, holeIndex, to)
-  const change: ScoreChange = { id: uid('chg'), tournamentId: t.id, entryId, round, holeIndex, hole, from, to, reason: reason.trim(), by, at: stamp(t.id), incidentId }
+  if (before !== to) {
+    if (to === 'P') setPickup(t, entryId, round, holeIndex, by.name)
+    else setStrokes(t, entryId, round, holeIndex, to, by.name)
+  }
+  // The committee's figure settles the hole even if the marker's record differs (kept, shown as settled — never as marker-confirmed)
+  if (markerSays !== to) (((data.settled[t.id] ??= {})[entryId] ??= {})[round] ??= {})[holeIndex] = { by, reason: reason.trim() }
+  invalidateAfterChange(t, entryId, round, by)
+  const change: ScoreChange = {
+    id: uid('chg'), tournamentId: t.id, entryId, round, holeIndex, hole, from: before === 'P' ? null : before, to: to === 'P' ? null : to,
+    fromPickup: before === 'P' || undefined, toPickup: to === 'P' || undefined, reason: reason.trim(), by, at: stamp(t.id), incidentId,
+  }
   data.changes.push(change)
   save()
   return change
@@ -446,6 +465,17 @@ export function markerOf(tournamentId: string, round: number, entryId: string): 
   const ring = g.entryIds.filter(id => id === entryId || !gone(id))
   const n = ring.length
   if (n < 2) return undefined
+  // Sprint 4 · SC3: in a scramble the team shares one card, so a player from ANOTHER team in the group marks it
+  const t = MOCK_TOURNAMENTS.find(x => x.id === tournamentId)
+  if (t?.format === 'Scramble') {
+    const team = (id: string) => field.find(e => e.id === id)?.teamId ?? id
+    const mine = team(entryId)
+    const others = ring.filter(id => team(id) !== mine)
+    if (!others.length) return undefined
+    const teams = [...new Set(ring.map(team))]
+    const next = teams[(teams.indexOf(mine) + teams.length - 1) % teams.length]
+    return field.find(e => e.id === others.find(id => team(id) === next))
+  }
   return field.find(e => e.id === ring[(ring.indexOf(entryId) + n - 1) % n])
 }
 
@@ -453,7 +483,10 @@ export function markerOf(tournamentId: string, round: number, entryId: string): 
 export function markedBy(tournamentId: string, round: number, entryId: string): Entry[] {
   const g = groupsFor(tournamentId, round).find(x => x.entryIds.includes(entryId))
   if (!g) return []
-  return entriesFor(tournamentId).filter(e => g.entryIds.includes(e.id) && e.id !== entryId && markerOf(tournamentId, round, e.id)?.id === entryId)
+  const t = MOCK_TOURNAMENTS.find(x => x.id === tournamentId)
+  return entriesFor(tournamentId).filter(e => g.entryIds.includes(e.id) && e.id !== entryId && markerOf(tournamentId, round, e.id)?.id === entryId
+    // Scramble: one shared card per team, so mark it once (on the card holder)
+    && (!t || t.format !== 'Scramble' || cardHolderId(t, e.id) === e.id))
 }
 
 /** The player is still out there but their marker isn't (withdrew, disqualified…) and nobody has taken the card */
@@ -491,31 +524,150 @@ export function setMarker(t: Tournament, round: number, entryId: string, markerI
  * otherwise; when the signed-in golfer is the marker, only what they entered counts.
  */
 export function markerCardFor(t: Tournament, entryId: string, round: number): (number | null)[] {
-  const own = cardFor(t, entryId, round)
-  const marker = markerOf(t.id, round, entryId)
-  const explicit = data.marker[t.id]?.[entryId]?.[round] ?? []
-  return own.map((s, i) => (explicit[i] !== undefined && explicit[i] !== null ? explicit[i] : marker?.isMe ? null : s))
+  // Strokes only (a pickup reads as null here); use markerOutcomesFor to see pickups
+  return markerOutcomesFor(t, entryId, round).map(v => (v === 'P' ? null : v))
 }
 
-export function setMarkerStrokes(t: Tournament, entryId: string, round: number, holeIndex: number, strokes: number | null) {
+export function setMarkerStrokes(t: Tournament, playerId: string, round: number, holeIndex: number, strokes: number | null) {
+  const entryId = cardHolderId(t, playerId)
   const card = [...(data.marker[t.id]?.[entryId]?.[round] ?? [])]
   card[holeIndex] = strokes
   ;((data.marker[t.id] ??= {})[entryId] ??= {})[round] = card
+  const picks = data.markerPickups[t.id]?.[entryId]?.[round]
+  if (picks) data.markerPickups[t.id][entryId][round] = picks.filter(i => i !== holeIndex)
+  const gaps = data.markerGaps[t.id]?.[entryId]?.[round]
+  if (gaps) data.markerGaps[t.id][entryId][round] = gaps.filter(i => i !== holeIndex)
   save()
 }
 
-/** Holes where the player's own score and their marker's record differ */
+/** Sprint 4 · SC1: the marker records a pickup for the player (Stableford only) */
+export function setMarkerPickup(t: Tournament, playerId: string, round: number, holeIndex: number) {
+  if (!pickupAllowed(t)) return
+  const entryId = cardHolderId(t, playerId)
+  const card = [...(data.marker[t.id]?.[entryId]?.[round] ?? [])]
+  card[holeIndex] = null
+  ;((data.marker[t.id] ??= {})[entryId] ??= {})[round] = card
+  const list = ((data.markerPickups[t.id] ??= {})[entryId] ??= {})[round] ??= []
+  if (!list.includes(holeIndex)) list.push(holeIndex)
+  save()
+}
+
+/**
+ * The marker's record as outcomes: strokes, 'P' (pickup) or null (not recorded). Simulated markers copy the player
+ * (pickups included) unless the seed says otherwise; when the signed-in golfer is the marker only what they entered counts.
+ */
+export function markerOutcomesFor(t: Tournament, playerId: string, round: number): HoleOutcome[] {
+  const entryId = cardHolderId(t, playerId)
+  const own = outcomesFor(t, entryId, round)
+  const marker = markerOf(t.id, round, entryId)
+  const explicit = data.marker[t.id]?.[entryId]?.[round] ?? []
+  const picks = new Set(data.markerPickups[t.id]?.[entryId]?.[round] ?? [])
+  const gaps = new Set(data.markerGaps[t.id]?.[entryId]?.[round] ?? [])
+  return own.map((s, i) => (picks.has(i) ? 'P' : explicit[i] !== undefined && explicit[i] !== null ? explicit[i]! : marker?.isMe || gaps.has(i) ? null : s))
+}
+
+/** Holes the committee settled with a correction (player and marker disagreed, or the marker had nothing) */
+export const settledFor = (tournamentId: string, entryId: string, round: number) => data.settled[tournamentId]?.[entryId]?.[round] ?? {}
+
+/** Holes where the player's own score and their marker's record differ — strokes vs strokes, or strokes vs pickup (SC1) */
 export function mismatches(t: Tournament, entryId: string, round: number): number[] {
-  const own = cardFor(t, entryId, round)
-  const marked = markerCardFor(t, entryId, round)
-  return own.flatMap((s, i) => (s !== null && marked[i] !== null && marked[i] !== s ? [i] : []))
+  const own = outcomesFor(t, entryId, round)
+  const marked = markerOutcomesFor(t, entryId, round)
+  const settled = settledFor(t.id, entryId, round)
+  return own.flatMap((s, i) => (s !== null && marked[i] !== null && marked[i] !== s && !settled[i] ? [i] : []))
+}
+
+/* ───────── Sprint 4 · SC2: marker verification policy ───────── */
+
+export const markerPolicyOf = (t: Tournament) => t.scoring?.markerPolicy ?? 'required'
+
+/** Why a card can't be verified yet. Empty lists (and no `noMarker`) = ready. */
+export interface VerifyBlockers {
+  /** Holes the player hasn't recorded (no strokes, no pickup) */
+  blank: number[]
+  /** Holes the player recorded that the marker hasn't confirmed (marker-required policy only) */
+  unconfirmed: number[]
+  /** Holes where player and marker disagree */
+  mismatched: number[]
+  /** Nobody marks this card (one-player group, or marker out and not replaced) */
+  noMarker: boolean
+  ready: boolean
+}
+
+export function verifyBlockers(t: Tournament, entryId: string, round: number): VerifyBlockers {
+  const own = outcomesFor(t, entryId, round)
+  const marked = markerOutcomesFor(t, entryId, round)
+  const required = markerPolicyOf(t) === 'required'
+  const marker = markerOf(t.id, round, entryId)
+  const noMarker = required && (!marker || markerMissing(t, round, entryId))
+  const blank = own.flatMap((s, i) => (s === null ? [i] : []))
+  const settled = settledFor(t.id, entryId, round)
+  const unconfirmed = required ? own.flatMap((s, i) => (s !== null && marked[i] === null && !settled[i] ? [i] : [])) : []
+  const mismatched = mismatches(t, entryId, round)
+  return { blank, unconfirmed, mismatched, noMarker, ready: !unconfirmed.length && !mismatched.length && !noMarker }
+}
+
+/** Plain-language blockers for a badge or tooltip */
+export function blockerText(b: VerifyBlockers, holeNo: (i: number) => number) {
+  const list = (xs: number[]) => xs.map(holeNo).join(', ')
+  return [
+    b.noMarker ? 'No marker for this card' : '',
+    b.mismatched.length ? `Marker disagrees on ${b.mismatched.length === 1 ? 'hole' : 'holes'} ${list(b.mismatched)}` : '',
+    b.unconfirmed.length ? `Marker hasn't confirmed ${b.unconfirmed.length === 1 ? 'hole' : 'holes'} ${list(b.unconfirmed)}` : '',
+  ].filter(Boolean)
+}
+
+/** An official verified a card without full marker confirmation (SC2): kept and shown, never shown as marker-confirmed */
+export interface VerifyOverride { by: Actor; at: string; reason: string; blockers: string[] }
+
+export const overrideFor = (tournamentId: string, entryId: string, round: number): VerifyOverride | undefined =>
+  data.overrides[tournamentId]?.[entryId]?.[round]
+
+/** Officials, the organiser and admins may override; marshals and golfers can't. A reason is required. */
+export const canOverride = (by: Actor) => by.role === 'official' || decidesPlay(by)
+
+export function overrideVerify(t: Tournament, entryId: string, round: number, reason: string, by: Actor) {
+  if (!canOverride(by) || !reason.trim() || cardState(t.id, entryId, round) === 'verified' || signOffFor(t.id, round)) return false
+  const course = getCourse(t.courseId)
+  const holes = course ? roundHoles(t, course, round) : []
+  const blockers = blockerText(verifyBlockers(t, entryId, round), i => holes[i]?.hole ?? i + 1)
+  const ids = teamCardIds(t, entryId)
+  ids.forEach(id => {
+    ;((data.overrides[t.id] ??= {})[id] ??= {})[round] = { by, at: stamp(t.id), reason: reason.trim(), blockers }
+    setCardState(t.id, id, round, 'verified')
+  })
+  const name = entriesFor(t.id).find(e => e.id === entryId)?.name ?? 'Player'
+  data.audit.push({ id: uid('aud'), tournamentId: t.id, round, kind: 'card', entryId, by, at: stamp(t.id), text: `${name}: card verified by official override`, reason: `${reason.trim()} (${blockers.join('; ') || 'no blockers'})` })
+  save()
+  return true
+}
+
+/** Scramble: the team shares one card, so verifying or unlocking applies to every member (SC3) */
+function teamCardIds(t: Tournament, entryId: string) {
+  if (t.format !== 'Scramble') return [entryId]
+  const holder = cardHolderId(t, entryId)
+  return entriesFor(t.id).filter(e => e.status === 'registered' && cardHolderId(t, e.id) === holder).map(e => e.id)
+}
+
+/**
+ * A change after a card was verified sends it back to "handed in" and drops the override, so it has to be checked
+ * again; a signed-off round is never touched here (it must be unlocked first). SC1/SC3: corrections invalidate sign-offs.
+ */
+function invalidateAfterChange(t: Tournament, entryId: string, round: number, by: Actor) {
+  for (const id of teamCardIds(t, entryId)) {
+    if (cardState(t.id, id, round) === 'verified') setCardState(t.id, id, round, 'submitted')
+    if (data.overrides[t.id]?.[id]?.[round]) delete data.overrides[t.id][id][round]
+  }
+  void by
 }
 
 /* ───────── Verifying cards ───────── */
 
 /** The committee accepts handed-in cards (one, or every clean one at once). A verified card is locked. */
 export function verifyCards(t: Tournament, entryIds: string[], round: number, by: Actor) {
-  const ids = entryIds.filter(id => cardState(t.id, id, round) !== 'verified')
+  // Sprint 4 · SC2: the server refuses a card that isn't ready under the marker policy (override is a separate action)
+  const ids = [...new Set(entryIds.flatMap(id => teamCardIds(t, id)))]
+    .filter(id => cardState(t.id, id, round) !== 'verified' && verifyBlockers(t, id, round).ready)
   if (!ids.length) return 0
   ids.forEach(id => setCardState(t.id, id, round, 'verified'))
   const field = entriesFor(t.id)
@@ -531,7 +683,10 @@ export function verifyCards(t: Tournament, entryIds: string[], round: number, by
 /** Opens a verified card again to correct it: a reason is required, and never after the round is signed off */
 export function unlockCard(t: Tournament, entryId: string, round: number, reason: string, by: Actor) {
   if (!reason.trim() || cardState(t.id, entryId, round) !== 'verified' || signOffFor(t.id, round)) return false
-  setCardState(t.id, entryId, round, 'submitted')
+  for (const id of teamCardIds(t, entryId)) {
+    setCardState(t.id, id, round, 'submitted')
+    if (data.overrides[t.id]?.[id]?.[round]) delete data.overrides[t.id][id][round]
+  }
   const name = entriesFor(t.id).find(e => e.id === entryId)?.name ?? 'Player'
   data.audit.push({ id: uid('aud'), tournamentId: t.id, round, kind: 'card', entryId, by, at: stamp(t.id), text: `${name}: card unlocked to correct`, reason: reason.trim() })
   save()
@@ -670,6 +825,8 @@ export function suspendPlay(t: Tournament, round: number, reason: string, note: 
   setSuspension(t.id, { reason, note: note.trim() || undefined, by: by.name, at })
   data.audit.push({ id: uid('aud'), tournamentId: t.id, round, kind: 'suspend', text: `Play suspended: ${reason}`, reason: note.trim() || undefined, by, at })
   save()
+  // Sprint 4 · section 7: golfers and staff get email + push (after the change is saved — the outbox rule)
+  notifyPlay(t, true, reason, by)
 }
 
 export function resumePlay(t: Tournament, round: number, note: string, by: Actor) {
@@ -678,6 +835,7 @@ export function resumePlay(t: Tournament, round: number, note: string, by: Actor
   setSuspension(t.id, undefined)
   data.audit.push({ id: uid('aud'), tournamentId: t.id, round, kind: 'resume', text: `Play resumed (suspended for ${s.reason.toLowerCase()})`, reason: note.trim() || undefined, by, at: stamp(t.id) })
   save()
+  notifyPlay(t, false, note.trim(), by)
 }
 
 /* ───────── Decisions that belong to the organiser (client, 30 Oct) ───────── */
@@ -889,6 +1047,8 @@ export interface ResultRow {
   perHole: { gross: (number | null)[]; net: (number | null)[]; points: (number | null)[] }
   /** Four-Ball: whose ball counted on each hole for the main result */
   counted?: (string | null)[]
+  /** Sprint 4 · SC1: hole indexes picked up (Stableford) */
+  pickups?: number[]
 }
 
 const siOf = (h: HoleData, n: number) => (n === 9 ? Math.ceil(h.handicap / 2) : h.handicap)
@@ -910,6 +1070,7 @@ function totals(holes: HoleData[], gross: (number | null)[], net: (number | null
 function playerRow(t: Tournament, round: number, r: LeaderboardRow, holes: HoleData[]): ResultRow {
   const n = holes.length
   const card = cardFor(t, r.entry.id, round)
+  const picks = pickupsFor(t, r.entry.id, round)
   const got = (i: number) => strokesOnHole(r.playing, siOf(holes[i], n), n)
   return {
     id: r.entry.id, name: r.entry.name, members: [r.entry], entry: r.entry, divisionId: r.entry.divisionId, isMe: !!r.entry.isMe,
@@ -918,29 +1079,33 @@ function playerRow(t: Tournament, round: number, r: LeaderboardRow, holes: HoleD
     perHole: {
       gross: card,
       net: card.map((s, i) => (s === null ? null : s - got(i))),
-      points: card.map((s, i) => (s === null ? null : stablefordPoints(s, holes[i].par, got(i)))),
+      // SC1: a pickup scores 0 points; gross and net stay blank for that hole
+      points: card.map((s, i) => (picks.has(i) ? 0 : s === null ? null : stablefordPoints(s, holes[i].par, got(i)))),
     },
+    pickups: [...picks],
   }
 }
 
 /**
  * Four-Ball (better ball): partners play their own ball off 85% of their course handicap and the better score on
  * each hole counts, gross and net separately. Scramble: one team score per hole off the team handicap (35/15,
- * 30/20/10 or 25/20/15/10% of the players' course handicaps, lowest first — client answer T-07). The prototype
- * stands in for the scramble's single team card with the best of the players' cards on each hole.
+ * 30/20/10 or 25/20/15/10% of the players' course handicaps, lowest first — client answer T-07). Sprint 4 · SC3:
+ * a scramble team has ONE shared card (live.ts `cardHolderId`), so every member's card is the same and the
+ * "best ball" below simply reads that one team score.
  */
 function teamRow(t: Tournament, round: number, id: string, members: LeaderboardRow[], holes: HoleData[], course: Course): ResultRow {
   const n = holes.length
   const four = t.format === 'Four-Ball'
   const main = basesFor(t)[0]
-  const cards = members.map(m => cardFor(t, m.entry.id, round))
+  const cards = (t.format === 'Scramble' ? members.slice(0, 1) : members).map(m => cardFor(t, m.entry.id, round))
+  const scorers = t.format === 'Scramble' ? members.slice(0, 1) : members
   // A disqualified player's scores don't count; a partner who withdrew keeps the holes they finished
-  const counts = members.map(m => m.status !== 'dq')
+  const counts = (t.format === 'Scramble' ? members.slice(0, 1) : members).map(m => t.format === 'Scramble' ? members.some(x => x.status !== 'dq') : m.status !== 'dq')
   const gross: (number | null)[] = [], net: (number | null)[] = [], points: (number | null)[] = [], counted: (string | null)[] = []
   const handicaps = members.map(m => courseHandicap(t, course, m.entry, four ? t.scoring?.allowancePct ?? 85 : 100, n === 9))
   const playing = four ? 0 : scrambleTeamHandicap(handicaps)
   holes.forEach((h, i) => {
-    const balls = members.flatMap((m, k) => {
+    const balls = scorers.flatMap((m, k) => {
       const s = cards[k][i]
       if (s === null || !counts[k]) return []
       const got = strokesOnHole(four ? handicaps[k] : playing, siOf(h, n), n)
@@ -1221,8 +1386,17 @@ export const membersOf = (t: Tournament, rowId?: string) => (rowId ? entriesFor(
 /* ───────── Reports and downloads ───────── */
 
 const CARD_LABEL: Record<CardState, string> = { 'in-progress': 'Not handed in', submitted: 'Handed in', verified: 'Verified' }
-const cell = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s }
-const csv = (rows: unknown[][]) => rows.map(r => r.map(cell).join(',')).join('\n')
+/**
+ * Sprint 4 · RP6–RP7: one CSV cell. Text starting with = + - @ (or tab / CR) is prefixed with ' so Excel and
+ * Google Sheets show it as text instead of running it as a formula (CSV injection). Numbers are left alone.
+ */
+export const cell = (v: unknown) => {
+  let s = v === null || v === undefined ? '' : String(v)
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+/** UTF-8 with a byte-order mark so Excel opens accents and names correctly */
+export const csv = (rows: unknown[][]) => '\uFEFF' + rows.map(r => r.map(cell).join(',')).join('\r\n')
 const divisionName = (t: Tournament, id?: string) => t.divisions?.find(d => d.id === id)?.name ?? ''
 export const fileName = (t: Tournament, what: string, ext = 'csv') => `${t.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${what}.${ext}`
 
@@ -1270,7 +1444,7 @@ export function scorecardsCsv(t: Tournament) {
     lines.push([n, 'Par', '', '', ...holes.map(h => h.par), holes.reduce((s, h) => s + h.par, 0), '', '', '', '', ''])
     for (const r of leaderboard(t, n)) {
       lines.push([
-        n, r.entry.name, divisionName(t, r.entry.divisionId), r.playing, ...cardFor(t, r.entry.id, n).map(s => s ?? ''),
+        n, r.entry.name, divisionName(t, r.entry.divisionId), r.playing, ...outcomesFor(t, r.entry.id, n).map(s => s ?? ''),
         r.thru ? r.gross : '', r.thru ? r.net : '', r.thru ? r.points : '', markerOf(t.id, n, r.entry.id)?.name ?? '', CARD_LABEL[r.state], ROUND_STATUS_LABEL[r.status],
       ])
     }
@@ -1282,6 +1456,124 @@ export function scorecardsCsv(t: Tournament) {
 /** The change log for the record */
 export function activityCsv(t: Tournament) {
   return csv([['When', 'Who', 'Role', 'What', 'Reason / detail'], ...activityFor(t).map(a => [a.at.replace('T', ' '), a.by.name, ACTOR_LABEL[a.by.role], a.title, a.detail ?? ''])])
+}
+
+/* ───────── Sprint 4 · Operational reports RP1–RP3 (registration, incidents, participation) ───────── */
+
+const INCIDENT_STATE_LABEL: Record<IncidentStatus, string> = { open: 'Open', committee: 'With the committee', resolved: 'Resolved' }
+export { INCIDENT_STATE_LABEL }
+
+/** Header block every operational CSV starts with: what it is, which tournament, when, and the filters used (RP4–RP5) */
+function reportHeader(t: Tournament, report: string, filters: Record<string, string | undefined>) {
+  const used = Object.entries(filters).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join('; ') || 'none'
+  return [['Report', report], ['Tournament', `${t.name} (${t.id})`], ['Generated (UTC)', new Date().toISOString().slice(0, 19).replace('T', ' ')], ['Filters', used], []]
+}
+
+/** Deterministic registration time for seeded players (the real API returns the stored timestamp) */
+const registeredAtOf = (t: Tournament, e: Entry) => {
+  const opens = t.registration?.opensAt ?? `${t.startDate}T09:00`
+  const day = [...e.id].reduce((n, c) => n + c.charCodeAt(0), 0) % 20
+  const d = new Date(`${opens.slice(0, 10)}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + day)
+  return `${d.toISOString().slice(0, 10)} ${String(8 + (day % 10)).padStart(2, '0')}:${String((day * 7) % 60).padStart(2, '0')}`
+}
+
+export interface RegistrationFilter { status?: 'registered' | 'withdrawn'; divisionId?: string; round?: number }
+export interface RegistrationRow { entry: Entry; division: string; status: string; registeredAt: string; by: string; team?: string; roundStatus?: string }
+
+/** RP1: one row per entry. Payment is deliberately not included (no financial reports this sprint). */
+export function registrationRows(t: Tournament, f: RegistrationFilter = {}): RegistrationRow[] {
+  return entriesFor(t.id)
+    .filter(e => e.status !== 'waitlist' && (!f.status || e.status === f.status) && (!f.divisionId || e.divisionId === f.divisionId))
+    .map(e => ({
+      entry: e, division: divisionName(t, e.divisionId), status: e.status === 'registered' ? 'Registered' : 'Withdrawn', registeredAt: registeredAtOf(t, e),
+      by: e.registeredBy === 'organiser' ? 'Organiser' : 'Golfer', team: e.teamId,
+      roundStatus: f.round ? (e.status === 'registered' ? ROUND_STATUS_LABEL[roundStatus(t.id, e.id, f.round)] : '') : undefined,
+    }))
+    .sort((a, b) => a.registeredAt.localeCompare(b.registeredAt))
+}
+
+export function registrationCsv(t: Tournament, f: RegistrationFilter = {}) {
+  const rows = registrationRows(t, f)
+  const team = teamSizeOf(t) > 1
+  return csv([
+    ...reportHeader(t, 'Registrations', { status: f.status, division: f.divisionId ? divisionName(t, f.divisionId) : undefined, round: f.round ? String(f.round) : undefined }),
+    ['Entry ID', 'Tournament ID', 'Golfer', 'Email', 'Handicap index', 'Division', ...(team ? ['Team'] : []), 'Registration status', 'Registered at', 'Entered by', ...(f.round ? [`Round ${f.round} status`] : [])],
+    ...rows.map(r => [r.entry.id, t.id, r.entry.name, r.entry.email ?? '', r.entry.handicapIndex, r.division, ...(team ? [r.team ?? ''] : []), r.status, r.registeredAt, r.by, ...(f.round ? [r.roundStatus ?? ''] : [])]),
+    [],
+    ['Rows', rows.length],
+  ])
+}
+
+export interface IncidentFilter { round?: number; kind?: IncidentKind; state?: IncidentStatus; from?: string; to?: string }
+
+/** RP2: incidents with their notes and decision. Only what is actually stored is reported (no invented transitions). */
+export function incidentRows(t: Tournament, f: IncidentFilter = {}) {
+  return incidentsFor(t.id)
+    .filter(i => (!f.round || i.round === f.round) && (!f.kind || i.kind === f.kind) && (!f.state || i.status === f.state)
+      && (!f.from || i.at.slice(0, 10) >= f.from) && (!f.to || i.at.slice(0, 10) <= f.to))
+    .sort((a, b) => a.at.localeCompare(b.at))
+}
+
+export function incidentsCsv(t: Tournament, f: IncidentFilter = {}) {
+  const rows = incidentRows(t, f)
+  const field = entriesFor(t.id)
+  const names = (ids: string[]) => ids.map(id => field.find(e => e.id === id)?.name ?? id).join('; ')
+  return csv([
+    ...reportHeader(t, 'Incidents', { round: f.round ? String(f.round) : undefined, kind: f.kind ? incidentKindLabel(f.kind) : undefined, state: f.state ? INCIDENT_STATE_LABEL[f.state] : undefined, from: f.from, to: f.to }),
+    ['Incident ID', 'Round', 'Hole', 'Kind', 'Players involved', 'Entry IDs', 'Raised by', 'Raised by role', 'Raised at', 'Note', 'State', 'Sent to committee', 'Follow-up notes', 'Decision', 'Decided by', 'Decided at', 'Score changes'],
+    ...rows.map(i => [
+      i.id, i.round, i.hole ?? '', incidentKindLabel(i.kind), names(i.entryIds), i.entryIds.join('; '), i.raisedBy.name, ACTOR_LABEL[i.raisedBy.role], i.at.replace('T', ' '), i.note,
+      INCIDENT_STATE_LABEL[i.status], i.status === 'committee' || (i.status === 'resolved' && i.decidedBy && i.decidedBy.role !== 'marshal') ? 'Yes' : 'No',
+      i.updates.map(u => `${u.at.replace('T', ' ')} ${u.by.name}: ${u.text}`).join(' | '), i.decision ?? '', i.decidedBy?.name ?? '', i.decidedAt?.replace('T', ' ') ?? '', i.scoreChangeIds?.length ?? 0,
+    ]),
+    [],
+    ['Rows', rows.length],
+  ])
+}
+
+export interface ParticipationSummary {
+  round: number
+  registered: number
+  withdrawnBefore: number
+  playing: number
+  wd: number
+  dq: number
+  ns: number
+  dnf: number
+  cardsSubmitted: number
+  cardsVerified: number
+  /** Teams (Four-Ball / scramble), else players */
+  unit: 'players' | 'teams'
+  units: number
+}
+
+/** RP3: counts per round. Denominator = registered entries (players); team events also give the team count. */
+export function participationSummary(t: Tournament, round: number): ParticipationSummary {
+  const all = entriesFor(t.id).filter(e => e.status !== 'waitlist')
+  const reg = all.filter(e => e.status === 'registered')
+  const st = (s: RoundStatus) => reg.filter(e => roundStatus(t.id, e.id, round) === s).length
+  const playing = reg.filter(e => roundStatus(t.id, e.id, round) === 'playing')
+  const team = teamSizeOf(t) > 1
+  return {
+    round, registered: reg.length, withdrawnBefore: all.length - reg.length, playing: playing.length, wd: st('wd'), dq: st('dq'), ns: st('no-show'), dnf: st('dnf'),
+    cardsSubmitted: playing.filter(e => cardState(t.id, e.id, round) !== 'in-progress').length, cardsVerified: playing.filter(e => cardState(t.id, e.id, round) === 'verified').length,
+    unit: team ? 'teams' : 'players', units: team ? new Set(reg.map(e => e.teamId ?? e.id)).size : reg.length,
+  }
+}
+
+export function participationCsv(t: Tournament, round?: number) {
+  const rounds = round ? [round] : roundNumbers(t)
+  const sums = rounds.map(n => participationSummary(t, n))
+  const reg = entriesFor(t.id).filter(e => e.status === 'registered')
+  return csv([
+    ...reportHeader(t, 'Participation', { round: round ? String(round) : 'all rounds' }),
+    ['Round', 'Registered (denominator)', 'Withdrawn before play', 'Playing', 'WD', 'DQ', 'NS', 'DNF', 'Cards submitted', 'Cards verified', sums[0]?.unit === 'teams' ? 'Teams' : 'Players'],
+    ...sums.map(s => [s.round, s.registered, s.withdrawnBefore, s.playing, s.wd, s.dq, s.ns, s.dnf, s.cardsSubmitted, s.cardsVerified, s.units]),
+    [],
+    ['Entry ID', 'Golfer', 'Division', ...rounds.flatMap(n => [`R${n} status`, `R${n} card`])],
+    ...reg.map(e => [e.id, e.name, divisionName(t, e.divisionId), ...rounds.flatMap(n => [ROUND_STATUS_CODE[roundStatus(t.id, e.id, n)] || 'PLAYING', CARD_LABEL[cardState(t.id, e.id, n)]])]),
+  ])
 }
 
 /**
@@ -1371,11 +1663,19 @@ interface OpsData {
   winners: Record<string, WinnerList>
   /** Decisions officials sent to the organiser */
   requests: OrganiserRequest[]
+  /** Sprint 4 · SC1: markerPickups[tournamentId][entryId][round] = holes the marker recorded as a pickup */
+  markerPickups: Record<string, Record<string, Record<number, number[]>>>
+  /** Sprint 4 · SC2: overrides[tournamentId][entryId][round] = verified by an official without full marker confirmation */
+  overrides: Record<string, Record<string, Record<number, VerifyOverride>>>
+  /** Sprint 4 · SC2 demo: holes a simulated marker hasn't recorded yet (markerGaps[tournamentId][entryId][round]) */
+  markerGaps: Record<string, Record<string, Record<number, number[]>>>
+  /** settled[tournamentId][entryId][round][holeIndex] = an official's correction that settles the hole */
+  settled: Record<string, Record<string, Record<number, Record<number, { by: Actor; reason: string }>>>>
 }
 
-const STORAGE_KEY = 'gtp-ops-v1'
+const STORAGE_KEY = 'gtp-ops-v2' // v2: Sprint 4 marker pickups, overrides, demo events
 
-const empty = (): OpsData => ({ incidents: [], changes: [], marker: {}, interests: [], audit: [], signOffs: {}, logins: {}, removed: {}, markers: {}, winners: {}, requests: [] })
+const empty = (): OpsData => ({ incidents: [], changes: [], marker: {}, interests: [], audit: [], signOffs: {}, logins: {}, removed: {}, markers: {}, winners: {}, requests: [], markerPickups: {}, overrides: {}, markerGaps: {}, settled: {} })
 
 let data: OpsData = empty()
 let version = 0
@@ -1468,7 +1768,35 @@ function seed(): OpsData {
       raisedBy: { name: name(g(3).entryIds[0]), role: 'golfer' }, at: at(4), status: 'open', updates: [],
     },
   )
+  seedSprint4(fresh)
   return fresh
+}
+
+/**
+ * Sprint 4 demo data on the Twilight Stableford (t9): a few players picked up, one marker recorded a number where
+ * the player picked up (blocks verification), and one card handed in with a hole the marker never confirmed.
+ */
+function seedSprint4(fresh: OpsData) {
+  const t = MOCK_TOURNAMENTS.find(x => x.id === 't9')
+  if (!t) return
+  const round = 1
+  const course = getCourse(t.courseId)
+  if (!course) return
+  const holes = roundHoles(t, course, round)
+  const field = entriesFor(t.id).filter(e => !e.isMe && e.status === 'registered' && !markerOf(t.id, round, e.id)?.isMe)
+  const fill = (id: string, upTo: number) => { for (let i = 0; i < upTo; i++) setStrokes(t, id, round, i, holes[i].par + (i % 3 === 0 ? 1 : i % 4 === 1 ? 0 : 1)) }
+  const [a, b, c, d] = field
+  // a: still playing, picked up on hole 3
+  if (a) { fill(a.id, 6); setPickup(t, a.id, round, 2) }
+  // b: handed in; picked up on hole 2 but the marker wrote 7 → discrepancy blocks verification
+  if (b) {
+    fill(b.id, holes.length); setPickup(t, b.id, round, 1); setCardState(t.id, b.id, round, 'submitted')
+    const m: (number | null)[] = []; m[1] = holes[1].par + 3; ((fresh.marker[t.id] ??= {})[b.id] ??= {})[round] = m
+  }
+  // c: handed in with a pickup, marker agrees → clean, verify
+  if (c) { fill(c.id, holes.length); setPickup(t, c.id, round, 6); setCardState(t.id, c.id, round, 'submitted') }
+  // d: handed in, but the marker never confirmed the last hole → marker-required policy blocks it
+  if (d) { fill(d.id, holes.length); setCardState(t.id, d.id, round, 'submitted'); ((fresh.markerGaps[t.id] ??= {})[d.id] ??= {})[round] = [holes.length - 1] }
 }
 
 export function resetOpsData() {
