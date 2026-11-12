@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { CourseImport } from './admin/CourseImport'
 import './store' // load any saved admin edits before the first render
 import { AppProvider, useApp, adminHomePath } from './app-context'
 import { ALL_PERMISSIONS } from './admin/access'
@@ -75,6 +76,7 @@ function Routes() {
         case 'admin-tournament-live': return <AdminTournamentLive key={key} id={route.id} />
         case 'admin-courses':         return can('courses.view') ? <AdminCourses key={key} /> : <NoAccess what="view courses" />
         case 'admin-course-edit':     return <CourseWizard key={key} id={route.id} />
+        case 'admin-course-import':   return <CourseImport key={key} />
         case 'admin-roles':           return <AdminRoles key={key} />
         case 'admin-role-edit':       return <AdminRoleEditor key={key} id={route.id} />
         case 'admin-users':           return <AdminUsers key={key} />

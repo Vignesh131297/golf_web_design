@@ -232,6 +232,8 @@ export default function CourseDetails({ id, tournamentId }: { id: string; tourna
               <a href={course.scorecardImageUrl} target="_blank" rel="noreferrer"
                 className="mt-4 inline-flex items-center gap-1.5 text-[14px] font-bold font-display text-ink hover:underline">View the club's scorecard ›</a>
             )}
+            {/* Sprint 4 · GC3/GC7: imported courses credit the provider */}
+            {course.source && <p className="mt-3 text-[12px] text-gray-400">Course data from {course.source.provider}{course.source.refreshedAt ? ` · updated ${course.source.refreshedAt.slice(0, 10)}` : ''}</p>}
           </section>
 
           <TeesTable course={course} />

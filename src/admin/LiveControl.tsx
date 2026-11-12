@@ -13,10 +13,12 @@ import {
   SuspendedBanner, WinnersBoard, fmtTime,
 } from '../ops-ui'
 import { BackLink } from '../screens/TournamentDetails'
+import { AnnouncementsBoard } from './Announcements'
+import { OperationalReports } from './OperationalReports'
 import { NoAccess } from './AdminShell'
 import { scopedTournaments } from './access'
 
-type Tab = 'scorecards' | 'leaderboard' | 'results' | 'field' | 'pace' | 'incidents' | 'staff' | 'changes' | 'reports'
+type Tab = 'scorecards' | 'leaderboard' | 'results' | 'field' | 'pace' | 'incidents' | 'staff' | 'changes' | 'reports' | 'announcements'
 
 /**
  * Tournament day for organisers and platform staff: build the tee sheet, manage the field, watch pace,
@@ -94,6 +96,7 @@ export function AdminTournamentLive({ id }: { id: string }) {
     ['pace', 'Pace of play', flagged || undefined],
     ['incidents', 'Disputes & incidents', decisions || undefined],
     ['staff', 'Marshals & officials', openSlots || undefined],
+    ['announcements', 'Announcements'],
     ['changes', 'Change log'],
     ['reports', 'Reports'],
   ]
@@ -157,7 +160,13 @@ export function AdminTournamentLive({ id }: { id: string }) {
       {tab === 'scorecards' && <ScorecardsBoard t={t} round={round} actor={actor} canManage={canScore} />}
       {tab === 'leaderboard' && <LeaderboardBoard t={t} round={round} />}
       {tab === 'results' && <WinnersBoard t={t} actor={actor} canEdit={canRun} />}
-      {tab === 'reports' && <ReportsBoard t={t} />}
+      {tab === 'reports' && (
+        <div className="space-y-6">
+          {canRun && <OperationalReports t={t} />}
+          <ReportsBoard t={t} />
+        </div>
+      )}
+      {tab === 'announcements' && <AnnouncementsBoard t={t} actor={actor} />}
       {tab === 'field' && (
         <div className="space-y-6">
           <FieldBoard t={t} round={round} />

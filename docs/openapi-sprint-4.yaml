@@ -1,0 +1,504 @@
+openapi: 3.0.3
+info:
+  title: Golf Tournament Platform — Sprint 4 additions
+  version: 0.4.0-draft
+  description: |
+    Draft contract for S4-D02. New and changed endpoints for Stableford pickups, marker verification policy,
+    scramble team cards, push devices, notification delivery, announcements, operational reports and external
+    golf course import. Read with api-contract-sprint-4.md (rules, permissions, migrations, open decisions).
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Scoring
+  - name: Devices
+  - name: Notifications
+  - name: Announcements
+  - name: Reports
+  - name: Courses
+
+paths:
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/{entryId}:
+    get:
+      tags: [Scoring]
+      summary: Scorecard with marker record, verification blockers and override
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }, { $ref: '#/components/parameters/entryId' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scorecard' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/{entryId}/holes/{holeNumber}:
+    put:
+      tags: [Scoring]
+      summary: Player records a hole (strokes or pickup). Scramble — any team member writes the team card.
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }, { $ref: '#/components/parameters/entryId' }, { $ref: '#/components/parameters/holeNumber' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/HoleWrite' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scorecard' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/{entryId}/marker-holes/{holeNumber}:
+    put:
+      tags: [Scoring]
+      summary: Assigned marker records the player's hole (strokes or pickup)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }, { $ref: '#/components/parameters/entryId' }, { $ref: '#/components/parameters/holeNumber' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/HoleWrite' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scorecard' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/{entryId}/submit:
+    post:
+      tags: [Scoring]
+      summary: Hand in the card (scramble — the team card for every member)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }, { $ref: '#/components/parameters/entryId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/VersionOnly' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scorecard' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/verify:
+    post:
+      tags: [Scoring]
+      summary: Verify one or more cards; server re-checks the marker policy
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cards]
+              properties:
+                cards: { type: array, items: { type: object, required: [entryId, version], properties: { entryId: { type: string }, version: { type: integer } } } }
+      responses:
+        '200':
+          description: Verified and rejected cards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: { type: array, items: { type: string } }
+                  rejected: { type: array, items: { type: object, properties: { entryId: { type: string }, code: { type: string }, verification: { $ref: '#/components/schemas/Verification' } } } }
+
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/{entryId}/verify-override:
+    post:
+      tags: [Scoring]
+      summary: Verify without full marker confirmation (reason required; card shows override)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }, { $ref: '#/components/parameters/entryId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReasonWithVersion' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scorecard' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/{entryId}/corrections:
+    post:
+      tags: [Scoring]
+      summary: Official correction with reason; settles the hole against the marker; invalidates verification and sign-off
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }, { $ref: '#/components/parameters/entryId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/HoleWrite'
+                - type: object
+                  required: [holeNumber, reason]
+                  properties:
+                    holeNumber: { type: integer, minimum: 1, maximum: 18 }
+                    reason: { type: string, minLength: 1 }
+                    incidentId: { type: string, nullable: true }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scorecard' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /tournaments/{tournamentId}/rounds/{round}/scorecards/{entryId}/unlock:
+    post:
+      tags: [Scoring]
+      summary: Reopen a verified card (refused after sign-off)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/round' }, { $ref: '#/components/parameters/entryId' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReasonWithVersion' } } } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Scorecard' } } } }
+
+  /me/devices:
+    get:
+      tags: [Devices]
+      summary: Devices registered to the signed-in account (tokens never returned)
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Device' } } } } } } }
+    post:
+      tags: [Devices]
+      summary: Register or update this installation's push token (upsert on installationId)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform, environment, token, installationId]
+              properties:
+                platform: { type: string, enum: [IOS, ANDROID] }
+                environment: { type: string, enum: [STAGING, PRODUCTION] }
+                token: { type: string }
+                installationId: { type: string, format: uuid }
+                appVersion: { type: string }
+      responses:
+        '201': { description: Registered, content: { application/json: { schema: { $ref: '#/components/schemas/Device' } } } }
+
+  /me/devices/{deviceId}:
+    parameters: [{ name: deviceId, in: path, required: true, schema: { type: string } }]
+    put:
+      tags: [Devices]
+      summary: Token rotation
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+      responses: { '200': { description: OK } }
+    delete:
+      tags: [Devices]
+      summary: Unregister (sign-out / account switch)
+      responses: { '204': { description: Removed } }
+
+  /tournaments/{tournamentId}/notifications:
+    get:
+      tags: [Notifications]
+      summary: Notification events for a tournament with delivery summary (owner / admin)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { name: type, in: query, schema: { $ref: '#/components/schemas/NotifyType' } }, { $ref: '#/components/parameters/page' }, { $ref: '#/components/parameters/size' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/NotifyEvent' } }, total: { type: integer } } } } } }
+
+  /notifications/{eventId}/deliveries:
+    get:
+      tags: [Notifications]
+      summary: Per recipient × channel × device delivery states
+      parameters: [{ name: eventId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Delivery' } } } } } } }
+
+  /tournaments/{tournamentId}/announcements/audience:
+    get:
+      tags: [Announcements]
+      summary: Recipient counts for an audience (preview)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { name: audience, in: query, required: true, schema: { $ref: '#/components/schemas/Audience' } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { golfers: { type: integer }, staff: { type: integer }, total: { type: integer }, withPush: { type: integer } } } } } }
+
+  /tournaments/{tournamentId}/announcements:
+    get:
+      tags: [Announcements]
+      summary: Announcements with delivery summary (owner / admin)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/Announcement' } } } } } } }
+    post:
+      tags: [Announcements]
+      summary: Send an announcement (idempotent)
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body, audience]
+              properties:
+                title: { type: string, maxLength: 80 }
+                body: { type: string, maxLength: 1000 }
+                audience: { $ref: '#/components/schemas/Audience' }
+      responses:
+        '201': { description: Sent, content: { application/json: { schema: { $ref: '#/components/schemas/Announcement' } } } }
+        '200': { description: 'Same Idempotency-Key: the original announcement, nothing sent again', content: { application/json: { schema: { $ref: '#/components/schemas/Announcement' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+  /announcements/{announcementId}:
+    get:
+      tags: [Announcements]
+      summary: Announcement detail (recipients, owner, admin)
+      parameters: [{ name: announcementId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Announcement' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+
+  /tournaments/{tournamentId}/reports/registrations.csv:
+    get:
+      tags: [Reports]
+      summary: RP1 registrations (no payment fields)
+      parameters:
+        - $ref: '#/components/parameters/tournamentId'
+        - { name: status, in: query, schema: { type: string, enum: [REGISTERED, WITHDRAWN] } }
+        - { name: divisionId, in: query, schema: { type: string } }
+        - { name: round, in: query, schema: { type: integer } }
+      responses: { '200': { $ref: '#/components/responses/Csv' }, '202': { $ref: '#/components/responses/ReportJob' }, '403': { $ref: '#/components/responses/Error' } }
+
+  /tournaments/{tournamentId}/reports/incidents.csv:
+    get:
+      tags: [Reports]
+      summary: RP2 incidents with notes, escalation and decision
+      parameters:
+        - $ref: '#/components/parameters/tournamentId'
+        - { name: round, in: query, schema: { type: integer } }
+        - { name: kind, in: query, schema: { type: string, enum: [SLOW_PLAY, CART, RULES, SCORE_DISPUTE, SAFETY, OTHER] } }
+        - { name: state, in: query, schema: { type: string, enum: [OPEN, COMMITTEE, RESOLVED] } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses: { '200': { $ref: '#/components/responses/Csv' }, '202': { $ref: '#/components/responses/ReportJob' }, '403': { $ref: '#/components/responses/Error' } }
+
+  /tournaments/{tournamentId}/reports/participation.csv:
+    get:
+      tags: [Reports]
+      summary: RP3 participation per round with denominators
+      parameters: [{ $ref: '#/components/parameters/tournamentId' }, { name: round, in: query, schema: { type: integer } }]
+      responses: { '200': { $ref: '#/components/responses/Csv' }, '202': { $ref: '#/components/responses/ReportJob' }, '403': { $ref: '#/components/responses/Error' } }
+
+  /report-jobs/{jobId}:
+    get:
+      tags: [Reports]
+      summary: Async export status
+      parameters: [{ name: jobId, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { state: { type: string, enum: [QUEUED, RUNNING, DONE, FAILED] }, downloadUrl: { type: string, nullable: true } } } } } }
+
+  /golf-courses/external/search:
+    get:
+      tags: [Courses]
+      summary: GC2 search the approved provider
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 3 } }
+        - { name: country, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/size'
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, properties: { items: { type: array, items: { $ref: '#/components/schemas/ExternalCourseHit' } }, total: { type: integer } } } } } }
+        '429': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+        '504': { $ref: '#/components/responses/Error' }
+
+  /golf-courses/external/{providerCourseId}:
+    get:
+      tags: [Courses]
+      summary: GC3 preview with missing fields and validation
+      parameters: [{ $ref: '#/components/parameters/providerCourseId' }]
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ExternalCourse' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
+
+  /golf-courses/external/{providerCourseId}/import:
+    post:
+      tags: [Courses]
+      summary: GC4–GC6 import (CREATE) or controlled update (UPDATE)
+      parameters: [{ $ref: '#/components/parameters/providerCourseId' }, { $ref: '#/components/parameters/idempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [layoutId, teeIds, mode]
+              properties:
+                layoutId: { type: string }
+                teeIds: { type: array, minItems: 1, items: { type: string } }
+                fixes: { type: array, items: { type: object, required: [holeNumber], properties: { holeNumber: { type: integer }, par: { type: integer }, strokeIndex: { type: integer } } } }
+                mode: { type: string, enum: [CREATE, UPDATE] }
+                existingCourseId: { type: string, nullable: true }
+      responses:
+        '201': { description: Imported, content: { application/json: { schema: { $ref: '#/components/schemas/ImportedCourse' } } } }
+        '200': { description: Updated (new course version), content: { application/json: { schema: { $ref: '#/components/schemas/ImportedCourse' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    tournamentId: { name: tournamentId, in: path, required: true, schema: { type: string } }
+    round: { name: round, in: path, required: true, schema: { type: integer, minimum: 1 } }
+    entryId: { name: entryId, in: path, required: true, schema: { type: string } }
+    holeNumber: { name: holeNumber, in: path, required: true, schema: { type: integer, minimum: 1, maximum: 18 } }
+    providerCourseId: { name: providerCourseId, in: path, required: true, description: 'Opaque, URL-encoded', schema: { type: string } }
+    idempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, format: uuid } }
+    page: { name: page, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+    size: { name: size, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Csv:
+      description: UTF-8 CSV (BOM, CRLF, formula-safe), context block first
+      headers: { Content-Disposition: { schema: { type: string }, description: 'attachment; filename="<slug>-<report>.csv"' } }
+      content: { text/csv: { schema: { type: string } } }
+    ReportJob:
+      description: Large export queued
+      content: { application/json: { schema: { type: object, properties: { jobId: { type: string } } } } }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string, example: STALE_VERSION }
+        message: { type: string }
+        traceId: { type: string }
+        details: { type: object, additionalProperties: true }
+    HoleOutcome: { type: string, enum: [STROKES, PICKUP, MISSING] }
+    Hole:
+      type: object
+      required: [holeNumber, outcome]
+      properties:
+        holeNumber: { type: integer }
+        outcome: { $ref: '#/components/schemas/HoleOutcome' }
+        strokes: { type: integer, nullable: true, minimum: 1, maximum: 15, description: 'null for PICKUP and MISSING — never 0' }
+        enteredBy: { type: object, nullable: true, properties: { entryId: { type: string }, name: { type: string }, at: { type: string, format: date-time } } }
+    HoleWrite:
+      type: object
+      required: [outcome, version]
+      properties:
+        outcome: { type: string, enum: [STROKES, PICKUP] }
+        strokes: { type: integer, nullable: true, minimum: 1, maximum: 15 }
+        version: { type: integer }
+    VersionOnly: { type: object, required: [version], properties: { version: { type: integer } } }
+    ReasonWithVersion: { type: object, required: [reason, version], properties: { reason: { type: string, minLength: 1 }, version: { type: integer } } }
+    Actor: { type: object, properties: { name: { type: string }, role: { type: string, enum: [GOLFER, MARSHAL, OFFICIAL, ORGANISER, ADMIN] } } }
+    Verification:
+      type: object
+      properties:
+        policy: { type: string, enum: [MARKER_REQUIRED, MARKER_OPTIONAL] }
+        ready: { type: boolean }
+        blankHoles: { type: array, items: { type: integer } }
+        unconfirmedHoles: { type: array, items: { type: integer } }
+        discrepancyHoles: { type: array, items: { type: integer } }
+        noMarker: { type: boolean }
+    Scorecard:
+      type: object
+      properties:
+        entryId: { type: string }
+        round: { type: integer }
+        state: { type: string, enum: [IN_PROGRESS, SUBMITTED, VERIFIED] }
+        roundStatus: { type: string, enum: [PLAYING, WD, DQ, NS, DNF] }
+        version: { type: integer }
+        cardHolderId: { type: string, description: 'Scramble: the team card; otherwise = entryId' }
+        holes: { type: array, items: { $ref: '#/components/schemas/Hole' } }
+        markerHoles: { type: array, items: { $ref: '#/components/schemas/Hole' } }
+        marker: { type: object, nullable: true, properties: { entryId: { type: string }, name: { type: string }, roundStatus: { type: string } } }
+        settledHoles: { type: array, items: { type: object, properties: { holeNumber: { type: integer }, by: { $ref: '#/components/schemas/Actor' }, reason: { type: string }, at: { type: string, format: date-time } } } }
+        verification: { $ref: '#/components/schemas/Verification' }
+        override: { type: object, nullable: true, properties: { by: { $ref: '#/components/schemas/Actor' }, at: { type: string, format: date-time }, reason: { type: string }, openItems: { type: array, items: { type: string } } } }
+        totals: { type: object, properties: { thru: { type: integer }, gross: { type: integer, nullable: true }, net: { type: integer, nullable: true }, points: { type: integer, nullable: true }, pickups: { type: integer } } }
+    Device:
+      type: object
+      properties:
+        deviceId: { type: string }
+        platform: { type: string, enum: [IOS, ANDROID] }
+        environment: { type: string, enum: [STAGING, PRODUCTION] }
+        label: { type: string }
+        registeredAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+    NotifyType: { type: string, enum: [REGISTRATION_CONFIRMED, STAFF_ASSIGNED, TEE_TIME_CHANGED, ANNOUNCEMENT, PLAY_SUSPENDED, PLAY_RESUMED] }
+    PushPayload:
+      type: object
+      description: Versioned push data — ids only, no private details
+      required: [v, type, eventId, tournamentId]
+      properties:
+        v: { type: integer, enum: [1] }
+        type: { $ref: '#/components/schemas/NotifyType' }
+        eventId: { type: string }
+        tournamentId: { type: string }
+        resourceId: { type: string, nullable: true }
+    ChannelSummary: { type: object, properties: { accepted: { type: integer }, pending: { type: integer }, failed: { type: integer }, skipped: { type: integer } } }
+    NotifyEvent:
+      type: object
+      properties:
+        eventId: { type: string }
+        type: { $ref: '#/components/schemas/NotifyType' }
+        title: { type: string }
+        createdAt: { type: string, format: date-time }
+        createdBy: { $ref: '#/components/schemas/Actor' }
+        recipientCount: { type: integer }
+        expiresAt: { type: string, format: date-time, nullable: true }
+        delivery: { type: object, properties: { email: { $ref: '#/components/schemas/ChannelSummary' }, push: { $ref: '#/components/schemas/ChannelSummary' } } }
+    Delivery:
+      type: object
+      properties:
+        account: { type: string }
+        name: { type: string }
+        channel: { type: string, enum: [EMAIL, PUSH] }
+        deviceId: { type: string, nullable: true }
+        state: { type: string, enum: [QUEUED, ATTEMPTED, ACCEPTED, FAILED, SKIPPED] }
+        attempts: { type: integer }
+        error: { type: string, nullable: true }
+    Audience: { type: string, enum: [GOLFERS, STAFF, BOTH] }
+    Announcement:
+      type: object
+      properties:
+        announcementId: { type: string }
+        tournamentId: { type: string }
+        title: { type: string }
+        body: { type: string }
+        audience: { $ref: '#/components/schemas/Audience' }
+        sentBy: { $ref: '#/components/schemas/Actor' }
+        sentAt: { type: string, format: date-time }
+        eventId: { type: string }
+        counts: { type: object, properties: { golfers: { type: integer }, staff: { type: integer } } }
+        duplicate: { type: boolean, description: true when returned for a repeated Idempotency-Key }
+        delivery: { type: object, properties: { email: { $ref: '#/components/schemas/ChannelSummary' }, push: { $ref: '#/components/schemas/ChannelSummary' } } }
+    ExternalCourseHit:
+      type: object
+      properties:
+        provider: { type: string }
+        providerCourseId: { type: string }
+        facility: { type: string }
+        city: { type: string }
+        region: { type: string }
+        country: { type: string }
+        attribution: { type: string }
+        layouts: { type: array, items: { type: object, properties: { layoutId: { type: string }, name: { type: string }, holes: { type: integer }, importedCourseId: { type: string, nullable: true } } } }
+    ExternalCourse:
+      type: object
+      properties:
+        providerCourseId: { type: string }
+        facility: { type: string }
+        address: { type: string, nullable: true }
+        city: { type: string }
+        region: { type: string }
+        country: { type: string }
+        postalCode: { type: string, nullable: true }
+        updatedAt: { type: string, format: date }
+        layouts:
+          type: array
+          items:
+            type: object
+            properties:
+              layoutId: { type: string }
+              name: { type: string }
+              holes: { type: integer, enum: [9, 18] }
+              tees: { type: array, items: { type: object, properties: { teeId: { type: string }, name: { type: string }, color: { type: string }, menRating: { type: number, nullable: true }, menSlope: { type: integer, nullable: true }, womenRating: { type: number, nullable: true }, womenSlope: { type: integer, nullable: true }, yards: { type: array, items: { type: integer } } } } }
+              scorecard: { type: array, items: { type: object, properties: { holeNumber: { type: integer }, par: { type: integer, nullable: true }, strokeIndex: { type: integer, nullable: true }, parWomen: { type: integer, nullable: true }, strokeIndexWomen: { type: integer, nullable: true } } } }
+              missing: { type: array, items: { type: string } }
+              validation: { type: object, properties: { errors: { type: array, items: { type: string } }, warnings: { type: array, items: { type: string } } } }
+    CourseSource:
+      type: object
+      properties:
+        provider: { type: string }
+        providerCourseId: { type: string }
+        layoutId: { type: string }
+        importedAt: { type: string, format: date-time }
+        importedBy: { type: string }
+        refreshedAt: { type: string, format: date-time, nullable: true }
+        providerVersion: { type: string }
+        filledByHand: { type: array, items: { type: string } }
+    ImportedCourse:
+      type: object
+      properties:
+        courseId: { type: string }
+        name: { type: string }
+        lifecycle: { type: string, enum: [DRAFT, ACTIVE, ARCHIVED] }
+        version: { type: integer }
+        source: { $ref: '#/components/schemas/CourseSource' }

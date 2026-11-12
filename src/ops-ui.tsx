@@ -6,7 +6,7 @@ import { useApp } from './app-context'
 import { getCourse } from './data'
 import { upsertTournament } from './store'
 import {
-  PAYMENT_LABEL, ROUND_STATUS_CODE, ROUND_STATUS_LABEL, addEntry, cardFor, entriesFor, finishRoundForDemo, groupsFor, leaderboard, moveToGroup, roundHoles,
+  PAYMENT_LABEL, ROUND_STATUS_CODE, ROUND_STATUS_LABEL, addEntry, cardFor, entriesFor, outcomesFor, pickupAllowed, type HoleOutcome, finishRoundForDemo, groupsFor, leaderboard, moveToGroup, roundHoles,
   roundStatus, suspensionFor, teamSizeOf, teeSetIdFor, ticksFor, updateEntry, useLiveVersion, type Entry, type PaymentStatus, type RoundStatus,
 } from './live'
 import { divisionForGolfer, formatClock, formatMoney, toPar, withTax } from './golf'
@@ -20,7 +20,9 @@ import {
   signOffRound, slotStatus, staffRoleOf, startReset, statusChoices, statusNoteFor, suggestWinners, suspendPlay, unlockCard, useOpsVersion, verifyCards, winnersCsv,
   type ActivityKind, type Actor, type GroupPace, type Incident, type IncidentKind, type IncidentStatus, type NeedItem, type OrganiserRequest, type PaceStatus, type RankBasis,
   type RequestStatus, type SlotStatus, type Standing, type Winner,
+  blockerText, canOverride, markerOutcomesFor, settledFor, markerPolicyOf, outcomeText, overrideFor, overrideVerify, verifyBlockers,
 } from './ops'
+import { notifyStaffAssigned, notifyTeeTimeChange } from './notify'
 
 /*
  * Tournament-day panels shared by the organiser console and the marshal / official consoles.
@@ -441,34 +443,76 @@ function CorrectionModal({ t, entry, round, holeIndex, actor, onClose }: { t: To
   const { showToast } = useApp()
   const course = getCourse(t.courseId)
   const hole = course ? roundHoles(t, course, round)[holeIndex] : undefined
-  const current = cardFor(t, entry.id, round)[holeIndex]
-  const marked = markerCardFor(t, entry.id, round)[holeIndex]
-  const [strokes, setValue] = useState<number | ''>(marked !== null && marked !== current ? marked : current ?? '')
-  const [reason, setReason] = useState(marked !== null && marked !== current ? 'Marker’s score confirmed' : '')
+  const current = outcomesFor(t, entry.id, round)[holeIndex]
+  const marked = markerOutcomesFor(t, entry.id, round)[holeIndex]
+  const disagree = marked !== null && marked !== current
+  const [value, setValue] = useState<number | 'P' | ''>((disagree ? marked : current) ?? '')
+  const [reason, setReason] = useState(disagree ? 'Marker’s score confirmed' : '')
   const [error, setError] = useState('')
+  const pickups = pickupAllowed(t)
 
   function save() {
-    if (strokes === '' || strokes < 1 || strokes > 15) return setError('Enter 1–15 strokes')
+    if (value === '' || (typeof value === 'number' && (value < 1 || value > 15))) return setError(pickups ? 'Enter 1–15 strokes, or choose Pickup' : 'Enter 1–15 strokes')
     if (!reason.trim()) return setError('A reason is required — it goes in the audit trail')
-    const c = correctScore(t, entry.id, round, holeIndex, strokes, reason, actor)
-    showToast(c ? `Hole ${hole?.hole}: ${current ?? '–'} → ${strokes} for ${entry.name}` : 'No change')
+    const c = correctScore(t, entry.id, round, holeIndex, value as HoleOutcome, reason, actor)
+    showToast(!c ? 'No change' : current === value ? `Hole ${hole?.hole}: ${outcomeText(current)} confirmed for ${entry.name} — settled by the committee` : `Hole ${hole?.hole}: ${outcomeText(current)} → ${outcomeText(value as HoleOutcome)} for ${entry.name}`)
     onClose()
   }
 
+  const show = (v: HoleOutcome) => (v === 'P' ? 'P' : v ?? '–')
   return (
-    <Modal title={`Correct hole ${hole?.hole ?? holeIndex + 1} · ${entry.name}`} subtitle="Every correction is kept with who made it, when and why." onClose={onClose}
+    <Modal title={`Correct hole ${hole?.hole ?? holeIndex + 1} · ${entry.name}`} subtitle="Every correction is kept with who made it, when and why. A verified card goes back to handed in." onClose={onClose}
       footer={<><Button variant="secondary" fullWidth onClick={onClose}>Cancel</Button><Button fullWidth onClick={save}>Save correction</Button></>}>
       <div className="grid grid-cols-3 gap-2 text-center">
-        <div className="rounded-2xl bg-canvas py-3"><p className="text-[11px] font-semibold text-gray-500">Player entered</p><p className="font-display font-extrabold text-[24px] text-ink">{current ?? '–'}</p></div>
-        <div className="rounded-2xl bg-canvas py-3"><p className="text-[11px] font-semibold text-gray-500">Marker recorded</p><p className="font-display font-extrabold text-[24px] text-ink">{marked ?? '–'}</p></div>
+        <div className="rounded-2xl bg-canvas py-3"><p className="text-[11px] font-semibold text-gray-500">Player entered</p><p className="font-display font-extrabold text-[24px] text-ink">{show(current)}</p></div>
+        <div className="rounded-2xl bg-canvas py-3"><p className="text-[11px] font-semibold text-gray-500">Marker recorded</p><p className="font-display font-extrabold text-[24px] text-ink">{show(marked)}</p></div>
         <div className="rounded-2xl bg-lime-400/40 py-3"><p className="text-[11px] font-semibold text-pine-800">Par {hole?.par}</p>
-          <input aria-label="Correct strokes" type="number" min={1} max={15} value={strokes} onChange={e => { setValue(e.target.value === '' ? '' : Number(e.target.value)); setError('') }}
+          <input aria-label="Correct strokes" type="number" min={1} max={15} value={value === 'P' ? '' : value} placeholder={value === 'P' ? 'P' : ''}
+            onChange={e => { setValue(e.target.value === '' ? '' : Number(e.target.value)); setError('') }}
             className="w-16 h-9 mt-0.5 rounded-xl bg-white text-center font-display font-extrabold text-[20px]" />
         </div>
       </div>
+      {pickups && (
+        <button type="button" onClick={() => { setValue('P'); setError('') }} aria-pressed={value === 'P'}
+          className={`w-full h-11 rounded-2xl text-[14px] font-semibold font-display ${value === 'P' ? 'bg-ink text-white' : 'bg-canvas text-ink hover:bg-gray-200'}`}>
+          Pickup — no score on this hole (0 points)
+        </button>
+      )}
       <Input label="Reason *" placeholder="e.g. Marker’s score confirmed after speaking to the group" value={reason} error={error} onChange={e => { setReason(e.target.value); setError('') }} />
     </Modal>
   )
+}
+
+/** Sprint 4 · SC2: verify a card the marker hasn't fully confirmed. Needs a reason; the card shows "Override" from then on. */
+function OverrideModal({ t, entry, round, actor, onClose }: { t: Tournament; entry: Entry; round: number; actor: Actor; onClose: () => void }) {
+  const { showToast } = useApp()
+  const course = getCourse(t.courseId)
+  const holes = course ? roundHoles(t, course, round) : []
+  const blockers = blockerText(verifyBlockers(t, entry.id, round), i => holes[i]?.hole ?? i + 1)
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState('')
+  function save() {
+    if (!reason.trim()) return setError('A reason is required — it stays on the card and in the change log')
+    if (overrideVerify(t, entry.id, round, reason, actor)) showToast(`${entry.name}'s card verified by override`)
+    else showToast('This card can’t be overridden now — reload and try again', 'error')
+    onClose()
+  }
+  return (
+    <Modal title={`Verify ${entry.name}’s card without the marker`} subtitle="Use this only when the marker can’t confirm (left the course, one-player group). The card is marked as overridden, not as marker-confirmed." onClose={onClose}
+      footer={<><Button variant="secondary" fullWidth onClick={onClose}>Cancel</Button><Button fullWidth onClick={save}>Verify by override</Button></>}>
+      <div className="rounded-2xl bg-amber-50 ring-1 ring-amber-200 p-3.5 text-[13px] text-amber-900">
+        <p className="font-bold font-display mb-1">Still open on this card</p>
+        <ul className="list-disc pl-5 space-y-0.5">{blockers.map(b => <li key={b}>{b}</li>)}</ul>
+      </div>
+      <Input label="Reason *" placeholder="e.g. Marker withdrew after the 7th; scores confirmed with the group on the 9th green" value={reason} error={error} onChange={e => { setReason(e.target.value); setError('') }} />
+    </Modal>
+  )
+}
+
+/** One hole on the official's card grid: strokes as usual, a pickup as "P" (SC1) */
+function OutcomeCell({ v, par }: { v: HoleOutcome; par: number }) {
+  if (v === 'P') return <span title="Pickup — 0 points" className="inline-flex w-8 h-8 items-center justify-center rounded-lg bg-gray-200 text-gray-600 font-display font-extrabold text-[13px]">P</span>
+  return <ScoreCell strokes={v} par={par} />
 }
 
 type CardFilter = 'all' | 'attention' | 'verified'
@@ -486,6 +530,9 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
   const [statusFor, setStatusFor] = useState<Entry | null>(null)
   const [unlocking, setUnlocking] = useState<Entry | null>(null)
   const [moving, setMoving] = useState<Entry | null>(null)
+  const [overriding, setOverriding] = useState<Entry | null>(null)
+  const pickups = pickupAllowed(t)
+  const required = markerPolicyOf(t) === 'required'
   // Closed tournaments can't be reopened in the system (client answer T-14); signed-off rounds are final too
   const closed = t.status === 'completed' || t.status === 'cancelled'
   const signed = signOffFor(t.id, round)
@@ -495,11 +542,13 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
   const shown = rows.filter(r => filter === 'all' || (filter === 'verified' ? r.state === 'verified' : needsAttention(r)))
   const counts = { all: rows.length, attention: rows.filter(needsAttention).length, verified: rows.filter(r => r.state === 'verified').length }
   // Handed in, marker agrees: safe to verify in one go (client, Sept 21: bulk actions for officials)
-  const clean = rows.filter(r => r.status === 'playing' && r.state === 'submitted' && !mismatches(t, r.entry.id, round).length)
+  // Sprint 4 · SC2: "clean" means ready under the marker policy — confirmed by the marker and no discrepancies
+  const clean = rows.filter(r => r.status === 'playing' && r.state === 'submitted' && verifyBlockers(t, r.entry.id, round).ready)
 
   return (
     <Panel flush title="Scorecards"
-      subtitle={closed ? 'This tournament is closed — scorecards are final.' : signed ? `Round ${round} was signed off by ${signed.by.name} — scorecards are final.` : 'Each card is checked against the marker’s record. Correct with a reason, then verify.'}
+      subtitle={closed ? 'This tournament is closed — scorecards are final.' : signed ? `Round ${round} was signed off by ${signed.by.name} — scorecards are final.`
+        : `Each card is checked against the marker’s record. ${required ? 'Marker confirmation is required on every hole before a card can be verified.' : 'The marker’s record is checked where they entered one.'}${pickups ? ' P = pickup (0 points).' : ''}`}
       aside={
         <div className="flex flex-wrap gap-1.5">
           {editable && clean.length > 0 && (
@@ -522,7 +571,7 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
               <th className="py-2.5 pl-6 pr-2">Pos</th>
               <th className="py-2.5 px-2">Player</th>
               <th className="py-2.5 px-2 text-right">Gross</th>
-              <th className="py-2.5 px-2 text-right">Net</th>
+              <th className="py-2.5 px-2 text-right">{pickups ? 'Points' : 'Net'}</th>
               <th className="py-2.5 px-2 text-right">Thru</th>
               <th className="py-2.5 px-2">Marker check</th>
               <th className="py-2.5 pl-2 pr-6 text-right">Card</th>
@@ -531,11 +580,14 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
           <tbody>
             {shown.map(r => {
               const isOpen = open === r.entry.id
-              const card = cardFor(t, r.entry.id, round)
-              const marked = markerCardFor(t, r.entry.id, round)
+              const card = outcomesFor(t, r.entry.id, round)
+              const marked = markerOutcomesFor(t, r.entry.id, round)
               const diff = mismatches(t, r.entry.id, round)
               const marker = markerOf(t.id, round, r.entry.id)
               const blanks = card.filter(s => s === null).length
+              const block = verifyBlockers(t, r.entry.id, round)
+              const override = overrideFor(t.id, r.entry.id, round)
+              const holeNo = (i: number) => holes[i]?.hole ?? i + 1
               const state = r.state
               return (
                 <Fragment key={r.entry.id}>
@@ -543,11 +595,13 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
                     <td className="py-3 pl-6 pr-2 font-display font-extrabold text-ink">{r.position}</td>
                     <td className="py-3 px-2 text-[14px] font-semibold text-ink">{r.entry.name}{pendingDq(t.id, r.entry.id) && <span className={`${CHIP} bg-rose-50 text-rose-700 ml-2`}>DQ with the organiser</span>}</td>
                     <td className="py-3 px-2 text-right font-display font-bold">{r.thru ? toPar(r.grossToPar) : '–'}</td>
-                    <td className="py-3 px-2 text-right text-[13px] text-gray-600">{r.thru ? toPar(r.netToPar) : '–'}</td>
+                    <td className="py-3 px-2 text-right text-[13px] text-gray-600">{r.thru ? (pickups ? `${r.points}${r.pickups ? ` · ${r.pickups}P` : ''}` : toPar(r.netToPar)) : '–'}</td>
                     <td className="py-3 px-2 text-right text-[13px] text-gray-600">{r.thru === r.holes ? 'F' : r.thru}</td>
                     <td className="py-3 px-2">
-                      {markerMissing(t, round, r.entry.id) ? <span className={`${CHIP} bg-rose-50 text-rose-700`}>No marker</span>
+                      {override ? <span title={`${override.by.name}: ${override.reason}`} className={`${CHIP} bg-violet-50 text-violet-700`}>Override · {override.by.name.split(' ')[0]}</span>
+                        : markerMissing(t, round, r.entry.id) || (block.noMarker && r.status === 'playing') ? <span className={`${CHIP} bg-rose-50 text-rose-700`}>No marker</span>
                         : diff.length ? <span className={`${CHIP} bg-rose-50 text-rose-700`}>{diff.length > 1 ? `${diff.length} score discrepancies` : 'Score discrepancy'}</span>
+                        : block.unconfirmed.length && r.state !== 'in-progress' ? <span className={`${CHIP} bg-amber-50 text-amber-700`}>{block.unconfirmed.length} not confirmed</span>
                         : r.thru ? <span className={`${CHIP} bg-emerald-50 text-emerald-700`}>Agrees</span> : <span className="text-[12px] text-gray-400">—</span>}
                     </td>
                     <td className="py-3 pl-2 pr-6 text-right">
@@ -574,21 +628,28 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
                                   <td key={h.hole} className="py-0.5">
                                     {editable && state !== 'verified'
                                       ? <button onClick={() => setCorrecting({ entry: r.entry, holeIndex: i })} aria-label={`Correct hole ${h.hole}`}
-                                          className={`rounded-lg hover:ring-2 hover:ring-pine-400 ${diff.includes(i) ? 'ring-2 ring-rose-400' : ''}`}><ScoreCell strokes={card[i]} par={h.par} /></button>
-                                      : <span className={diff.includes(i) ? 'inline-block rounded-lg ring-2 ring-rose-400' : ''}><ScoreCell strokes={card[i]} par={h.par} /></span>}
+                                          className={`rounded-lg hover:ring-2 hover:ring-pine-400 ${diff.includes(i) ? 'ring-2 ring-rose-400' : block.unconfirmed.includes(i) ? 'ring-2 ring-amber-300' : ''}`}><OutcomeCell v={card[i]} par={h.par} /></button>
+                                      : <span className={diff.includes(i) ? 'inline-block rounded-lg ring-2 ring-rose-400' : ''}><OutcomeCell v={card[i]} par={h.par} /></span>}
                                   </td>
                                 ))}
                               </tr>
                               <tr>
                                 <td className="pr-3 text-left text-[12px] font-semibold text-gray-500 whitespace-nowrap">Marker{marker ? ` (${marker.name.split(' ')[0]}${roundStatus(t.id, marker.id, round) !== 'playing' ? `, ${ROUND_STATUS_CODE[roundStatus(t.id, marker.id, round)]}` : ''})` : ''}</td>
-                                {holes.map((h, i) => <td key={h.hole} className={`py-0.5 text-[13px] font-semibold ${diff.includes(i) ? 'text-rose-600' : 'text-gray-400'}`}>{marked[i] ?? '·'}</td>)}
+                                {holes.map((h, i) => {
+                                  const st = settledFor(t.id, r.entry.id, round)[i]
+                                  if (st && marked[i] !== card[i]) return <td key={h.hole} title={`Settled by ${st.by.name}: ${st.reason}`} className="py-0.5 text-[13px] font-semibold text-violet-600"><span className="line-through opacity-60">{marked[i] ?? '–'}</span>✓</td>
+                                  return <td key={h.hole} className={`py-0.5 text-[13px] font-semibold ${diff.includes(i) ? 'text-rose-600' : block.unconfirmed.includes(i) ? 'text-amber-600' : 'text-gray-400'}`}>{marked[i] ?? (block.unconfirmed.includes(i) ? '?' : '·')}</td>
+                                })}
                               </tr>
                             </tbody>
                           </table>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 mt-3">
                           {editable && state !== 'verified' && (
-                            <Button size="sm" disabled={diff.length > 0} onClick={() => { verifyCards(t, [r.entry.id], round, actor); showToast(`${r.entry.name}'s card verified`) }}>Verify card</Button>
+                            <Button size="sm" disabled={!block.ready} onClick={() => { verifyCards(t, [r.entry.id], round, actor) ? showToast(`${r.entry.name}'s card verified`) : showToast('Not ready to verify — reload and check the marker record', 'error') }}>Verify card</Button>
+                          )}
+                          {editable && state !== 'verified' && !block.ready && r.status === 'playing' && canOverride(actor) && !diff.length && (
+                            <Button size="sm" variant="secondary" onClick={() => setOverriding(r.entry)}>Verify by override…</Button>
                           )}
                           {editable && state === 'verified' && (
                             <Button size="sm" variant="secondary" onClick={() => setUnlocking(r.entry)}>Unlock to correct…</Button>
@@ -604,6 +665,8 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
                               : pendingDq(t.id, r.entry.id) ? 'A disqualification is with the organiser. The player keeps playing until they decide.'
                               : markerMissing(t, round, r.entry.id) ? `${marker?.name} can’t mark any more — give the card to someone else in the group.`
                               : diff.length ? 'Settle the red holes first: click a score to correct it.'
+                              : override ? `Verified by override: ${override.by.name} — “${override.reason}”. Not marker-confirmed.`
+                              : !block.ready && state !== 'in-progress' ? `${blockerText(block, holeNo).join(' · ')}. Ask the marker to confirm, or verify by override with a reason.`
                               : blanks && state === 'submitted' ? `Submitted with ${blanks} blank hole${blanks > 1 ? 's' : ''} — the player is responsible for the card as entered.`
                               : editable && state !== 'verified' ? 'Click any score to correct it.' : ''}
                           </span>
@@ -622,6 +685,7 @@ export function ScorecardsBoard({ t, round, actor, canManage }: { t: Tournament;
       {statusFor && <StatusModal t={t} entry={statusFor} round={round} actor={actor} onClose={() => setStatusFor(null)} />}
       {unlocking && <UnlockModal t={t} entry={unlocking} round={round} actor={actor} onClose={() => setUnlocking(null)} />}
       {moving && <MarkerModal t={t} entry={moving} round={round} actor={actor} onClose={() => setMoving(null)} />}
+      {overriding && <OverrideModal t={t} entry={overriding} round={round} actor={actor} onClose={() => setOverriding(null)} />}
     </Panel>
   )
 }
@@ -1774,7 +1838,8 @@ function RegisterGolferModal({ t, onClose }: { t: Tournament; onClose: () => voi
 
 export function FieldBoard({ t, round }: { t: Tournament; round: number }) {
   useLiveVersion()
-  const { showDialog, showToast } = useApp()
+  const { showDialog, showToast, consoleActor } = useApp()
+  const consoleActorOf = (): Actor => consoleActor ?? { name: 'Organiser', role: 'organiser' }
   const course = getCourse(t.courseId)
   const field = entriesFor(t.id).filter(e => e.status === 'registered')
   const groups = groupsFor(t.id, round)
@@ -1823,7 +1888,14 @@ export function FieldBoard({ t, round }: { t: Tournament; round: number }) {
                   </td>
                   <td className="py-2.5 px-2">
                     <select aria-label={`Group for ${e.name}`} className={SELECT} disabled={started || closed || !groups.length} value={group?.id ?? ''}
-                      onChange={x => { moveToGroup(t.id, round, e.id, x.target.value); showToast(`${e.name} moved`) }}>
+                      onChange={x => {
+                        const from = groupsFor(t.id, round).find(g => g.entryIds.includes(e.id))
+                        moveToGroup(t.id, round, e.id, x.target.value)
+                        const to = groupsFor(t.id, round).find(g => g.id === x.target.value)
+                        // Sprint 4 · section 7: the moved player gets the new time; nobody else's time changed
+                        const ev = to && to.time !== from?.time ? notifyTeeTimeChange(t, round, [e.id], consoleActorOf(), `Your round ${round} tee time is now ${formatClock(to.time)} from hole ${to.startHole}.`) : undefined
+                        showToast(ev ? `${e.name} moved — they’ve been sent the new tee time (email + app)` : `${e.name} moved`)
+                      }}>
                       {!group && <option value="">No group</option>}
                       {groups.map(g => <option key={g.id} value={g.id}>{formatClock(g.time)} · tee {g.startHole} ({g.entryIds.length})</option>)}
                     </select>
@@ -1894,6 +1966,7 @@ function FillSlotModal({ t, index, onClose }: { t: Tournament; index: number; on
     const officials: Official[] = t.officials!.map((o, i) => (i === index ? { ...o, name: name.trim(), email: email.trim(), phone, invitedAt: new Date().toISOString() } : o))
     upsertTournament({ ...t, officials })
     const code = sendInvite(email.trim())
+    notifyStaffAssigned(t, email.trim(), name.trim(), slot.role)
     showToast(code
       ? `Invite sent to ${email.trim()} by email and text — code ${code} (shown for the demo; works once, for ${LOGIN_RULES.inviteHours} hours)`
       : `${name.trim()} already has a login — this tournament now shows in their assignments`)

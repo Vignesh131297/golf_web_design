@@ -757,6 +757,20 @@ function Results({ t, set }: SectionProps) {
           { value: 'none', title: 'Not required', description: 'Submitted cards count straight away' },
         ]}
         onChange={v => set({ scoreVerification: v as 'organizer' | 'none' })} />
+      {t.scoreVerification !== 'none' && t.scoring && (
+        <OptionCards label="Marker confirmation" required value={t.scoring.markerPolicy ?? 'required'}
+          options={[
+            { value: 'required', title: 'Required on every hole', description: 'A card can’t be verified until the marker has confirmed every hole and nothing is in dispute. Officials can override with a reason.' },
+            { value: 'optional', title: 'Checked when entered', description: 'Discrepancies still block verification, but holes the marker skipped don’t' },
+          ]}
+          onChange={v => set({ scoring: { ...t.scoring!, markerPolicy: v as 'required' | 'optional' } })} />
+      )}
+      {t.format === 'Stableford' && (
+        <p className="text-[13px] text-gray-600 bg-canvas rounded-2xl px-4 py-3 leading-relaxed">
+          <span className="font-bold text-ink">Pickups:</span> in Stableford a golfer can pick up once they can’t score. The hole counts as played with 0 points;
+          a blank hole stays incomplete. The marker records the pickup too.
+        </p>
+      )}
       <FieldGroup title="Results release" hint="Results are released after the round is complete">
         <ol className="flex flex-col md:flex-row gap-2">
           {steps.map((s, i) => (
@@ -865,6 +879,7 @@ function Review({ t, errors, warnings, onEdit, action }: { t: Tournament; errors
     { title: 'Rules, prizes & visibility', edit: 'rules', rows: [
       ['Local rules', t.localRules?.trim() ? `${t.localRules.trim().split('\n').length} rule(s)` : 'None'],
       ['Score verification', t.scoreVerification === 'none' ? 'Not required' : 'Organiser verifies'],
+      ['Marker confirmation', t.scoreVerification === 'none' ? '—' : (t.scoring?.markerPolicy ?? 'required') === 'required' ? 'Required on every hole' : 'Checked when entered'],
       ['Prizes', (t.prizes ?? []).map(p => p.category === 'Custom' ? p.label || 'Prize' : p.category).join(' · ') || 'None'],
       ['Visibility', 'Public'],
     ] },

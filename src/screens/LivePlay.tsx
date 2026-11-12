@@ -7,18 +7,27 @@ import { navigate } from '../router'
 import { PageHeader } from '../shell'
 import { useDataVersion } from '../store'
 import {
-  addShot, cardFor, cardState, entriesFor, groupOf, leaderboard, myEntry, roundHoles, setCardState, setStrokes,
-  shotsFor, undoShot, useLiveVersion,
+  addShot, cardFor, cardState, entriesFor, groupOf, leaderboard, myEntry, outcomesFor, pickupAllowed, roundHoles, setCardState, setPickup, setStrokes,
+  shotsFor, teamEntryFor, undoShot, useLiveVersion, type HoleOutcome,
 } from '../live'
 import { dist, generateHoleMap, playingHandicap, scoreLabel, strokesOnHole, toPar, formatClock } from '../golf'
 import { HoleMapView, greenDistances, hazardsAhead } from '../hole-map'
 import { BackLink } from './TournamentDetails'
 import { ScoreCell } from './Leaderboard'
-import { currentRound, incidentsFor, logIncident, markedBy, markerCardFor, markerMissing, markerOf, mismatches, setMarkerStrokes, useOpsVersion } from '../ops'
+import {
+  currentRound, incidentsFor, logIncident, markedBy, markerMissing, markerOf, markerOutcomesFor, mismatches, outcomeText, setMarkerPickup, setMarkerStrokes, useOpsVersion,
+} from '../ops'
 import { IncidentForm, MyRoundStatus, MyRulings } from '../ops-ui'
 import { ROUND_STATUS_LABEL, groupBehind, roundStatus, suspensionFor, teeSetIdFor } from '../live'
 
 const HAZARD_LABEL = { bunker: 'Bunker', water: 'Water', trees: 'Trees' }
+
+/** A hole on the card: strokes, or "P" for a Stableford pickup (Sprint 4 · SC1) */
+function HoleCell({ v, par }: { v: HoleOutcome; par: number }) {
+  if (v === 'P') return <span title="Pickup — 0 points" className="inline-flex w-8 h-8 items-center justify-center rounded-lg bg-gray-200 text-gray-600 font-display font-extrabold text-[13px]">P</span>
+  return <ScoreCell strokes={v} par={par} />
+}
+const say = (v: HoleOutcome) => (v === 'P' ? 'pickup' : v === null ? '–' : String(v))
 
 /**
  * Live scoring for the signed-in golfer: hole-by-hole strokes, the hole map with the ball's
@@ -37,11 +46,12 @@ export default function LivePlay({ id }: { id: string }) {
   const me = t ? myEntry(t.id) : undefined
   const round = t ? currentRound(t) : 1
   const holes = t && course ? roundHoles(t, course, round) : []
-  const card = t && me ? cardFor(t, me.id, round) : []
+  // Sprint 4: strokes, 'P' (Stableford pickup) or null. A scramble team shares one card.
+  const card: HoleOutcome[] = t && me ? outcomesFor(t, me.id, round) : []
   const firstOpen = Math.max(0, card.findIndex(s => s === null))
   const [index, setIndex] = useState(firstOpen === -1 ? 0 : firstOpen)
   const [target, setTarget] = useState<Point | undefined>()
-  const [draft, setDraft] = useState<number | null>(null)
+  const [draft, setDraft] = useState<number | 'P' | null>(null)
   // The official signed off the last round while this screen was open: carry on from the new round's first open hole
   const [seenRound, setSeenRound] = useState(round)
   if (round !== seenRound) { setSeenRound(round); setIndex(firstOpen) }
@@ -74,7 +84,15 @@ export default function LivePlay({ id }: { id: string }) {
   const toGreen = greenDistances(map, ball)
   const ahead = hazardsAhead(map, ball).slice(0, 3)
   const saved = card[index]
-  const strokes = draft ?? saved ?? hole.par
+  const value = draft ?? saved ?? hole.par
+  const isPick = value === 'P'
+  const strokes = isPick ? hole.par : value
+  const pickups = pickupAllowed(t)
+  const stableford = t.format === 'Stableford'
+  const points = Math.max(0, 2 + hole.par + received - strokes)
+  const scramble = t.format === 'Scramble' && !!me.teamId
+  const teammates = scramble ? entriesFor(t.id).filter(e => e.teamId === me.teamId && e.id !== me.id && e.status === 'registered') : []
+  const enteredBy = scramble ? teamEntryFor(t, me.id, round, index) : undefined
   const row = leaderboard(t, round).find(r => r.entry.id === me.id)
   const group = groupOf(t.id, round, me.id)
   const behind = groupBehind(t.id, round, me.id)
@@ -84,7 +102,7 @@ export default function LivePlay({ id }: { id: string }) {
   const marker = markerOf(t.id, round, me.id)
   const markees = markedBy(t.id, round, me.id).filter(p => roundStatus(t.id, p.id, round) === 'playing')
   const noMarker = markerMissing(t, round, me.id)
-  const myMarked = markerCardFor(t, me.id, round)
+  const myMarked = markerOutcomesFor(t, me.id, round)
   const disputedHoles = new Set(incidentsFor(t.id).filter(i => i.kind === 'score-dispute' && i.status !== 'resolved' && i.entryIds.includes(me.id)).map(i => i.hole))
   const unsettled = mismatches(t, me.id, round).filter(i => !disputedHoles.has(holes[i].hole))
 
@@ -95,8 +113,13 @@ export default function LivePlay({ id }: { id: string }) {
   }
 
   function saveScore() {
-    setStrokes(t!, me!.id, round, index, strokes)
-    showToast(`Hole ${hole.hole}: ${strokes} — ${scoreLabel(strokes, hole.par)}`)
+    if (isPick) {
+      setPickup(t!, me!.id, round, index, me!.name)
+      showToast(`Hole ${hole.hole}: pickup — 0 points`)
+    } else {
+      setStrokes(t!, me!.id, round, index, strokes, me!.name)
+      showToast(`Hole ${hole.hole}: ${strokes} — ${scoreLabel(strokes, hole.par)}${scramble ? ' · team card updated' : ''}`)
+    }
     setDraft(null)
     if (index < holes.length - 1) goTo(index + 1)
   }
@@ -122,7 +145,7 @@ export default function LivePlay({ id }: { id: string }) {
   function sendToCommittee(i: number) {
     logIncident({
       tournamentId: t!.id, round, kind: 'score-dispute', hole: holes[i].hole, entryIds: [me!.id], status: 'committee',
-      note: `${me!.name} has ${card[i]} on hole ${holes[i].hole}; marker ${marker?.name ?? ''} recorded ${myMarked[i]}. We couldn’t agree.`,
+      note: `${me!.name} has ${outcomeText(card[i])} on hole ${holes[i].hole}; marker ${marker?.name ?? ''} recorded ${outcomeText(myMarked[i])}. We couldn’t agree.`,
       raisedBy: { name: me!.name, role: 'golfer' },
     })
     showToast('Sent to the committee — keep playing, they’ll decide')
@@ -151,9 +174,9 @@ export default function LivePlay({ id }: { id: string }) {
     // Golfers submit the card as entered and are responsible for it (client answer T-09)
     showDialog({
       title: blanks ? `Submit with ${blanks} blank hole${blanks > 1 ? 's' : ''}?` : 'Submit your scorecard?',
-      message: `${blanks ? 'Holes without a score stay blank on your card. ' : ''}Gross ${row?.gross ?? '—'} (${toPar(row?.grossToPar ?? 0)}), net ${row?.net ?? '—'}. You're responsible for the card as entered; the committee verifies it next and you can't change scores after submitting.`,
+      message: `${blanks ? 'Holes without a score stay blank on your card (a blank is not a pickup). ' : ''}${stableford ? `${row?.points ?? 0} points${row?.pickups ? `, ${row.pickups} pickup${row.pickups > 1 ? 's' : ''}` : ''}` : `Gross ${row?.gross ?? '—'} (${toPar(row?.grossToPar ?? 0)}), net ${row?.net ?? '—'}`}.${scramble ? ' This hands in the team card for your whole team.' : ''} You're responsible for the card as entered; the committee verifies it next and you can't change scores after submitting.`,
       confirmLabel: 'Submit card',
-      onConfirm: () => { setCardState(t!.id, me!.id, round, 'submitted'); showToast('Scorecard submitted') },
+      onConfirm: () => { [me!, ...teammates].forEach(e => setCardState(t!.id, e.id, round, 'submitted')); showToast(scramble ? 'Team card submitted' : 'Scorecard submitted') },
     })
   }
 
@@ -210,7 +233,7 @@ export default function LivePlay({ id }: { id: string }) {
         {holes.map((h, i) => {
           const s = card[i]
           return (
-            <button key={h.hole} onClick={() => goTo(i)} aria-pressed={i === index} aria-label={`Hole ${h.hole}${s !== null ? `, ${s} strokes` : ''}`}
+            <button key={h.hole} onClick={() => goTo(i)} aria-pressed={i === index} aria-label={`Hole ${h.hole}${s === 'P' ? ', pickup' : s !== null ? `, ${s} strokes` : ''}`}
               className={`flex-shrink-0 w-12 rounded-2xl py-1.5 flex flex-col items-center ${i === index ? 'bg-ink text-white' : 'bg-white shadow-card text-ink'}`}>
               <span className={`text-[10px] font-bold ${i === index ? 'text-white/60' : 'text-gray-400'}`}>{h.hole}</span>
               <span className="text-[15px] font-display font-extrabold leading-tight">{s ?? '–'}</span>
@@ -279,19 +302,30 @@ export default function LivePlay({ id }: { id: string }) {
 
           <section className="bg-white rounded-[28px] shadow-card p-6">
             <div className="flex items-center justify-between">
-              <h2 className="font-display font-bold text-ink text-[18px]">Score for hole {hole.hole}</h2>
+              <h2 className="font-display font-bold text-ink text-[18px]">{scramble ? 'Team score' : 'Score'} for hole {hole.hole}</h2>
               <span className="text-[12px] font-semibold text-pine-600">{received ? `${received} stroke${received > 1 ? 's' : ''} received` : 'No strokes received'}</span>
             </div>
+            {scramble && (
+              <p className="mt-2 rounded-2xl bg-lime-400/30 px-3.5 py-2 text-[12px] text-pine-800">
+                <span className="font-bold">Shared team card</span> with {teammates.map(e => e.name).join(', ') || 'your team'}. {enteredBy ? `Hole ${hole.hole} entered by ${enteredBy.by}.` : 'Either of you can enter it; you both see the same score.'}
+              </p>
+            )}
             <div className="flex items-center justify-center gap-5 mt-5">
-              <button disabled={locked || strokes <= 1} onClick={() => setDraft(strokes - 1)} aria-label="One fewer stroke"
+              <button disabled={locked || (!isPick && strokes <= 1)} onClick={() => setDraft(isPick ? hole.par : strokes - 1)} aria-label="One fewer stroke"
                 className="w-14 h-14 rounded-full bg-canvas text-ink text-[26px] font-bold disabled:opacity-40">−</button>
-              <div className="text-center w-28">
-                <p className="font-display font-extrabold text-ink text-[56px] leading-none">{strokes}</p>
-                <p className="text-[13px] font-semibold text-gray-500 mt-1">{scoreLabel(strokes, hole.par)} · net {strokes - received}</p>
+              <div className="text-center w-32">
+                <p className="font-display font-extrabold text-ink text-[56px] leading-none">{isPick ? 'P' : strokes}</p>
+                <p className="text-[13px] font-semibold text-gray-500 mt-1">{isPick ? 'Picked up · 0 points' : stableford ? `${scoreLabel(strokes, hole.par)} · ${points} pt${points === 1 ? '' : 's'}` : `${scoreLabel(strokes, hole.par)} · net ${strokes - received}`}</p>
               </div>
-              <button disabled={locked || strokes >= 15} onClick={() => setDraft(strokes + 1)} aria-label="One more stroke"
+              <button disabled={locked || (!isPick && strokes >= 15)} onClick={() => setDraft(isPick ? hole.par : strokes + 1)} aria-label="One more stroke"
                 className="w-14 h-14 rounded-full bg-canvas text-ink text-[26px] font-bold disabled:opacity-40">+</button>
             </div>
+            {pickups && !locked && (
+              <button onClick={() => setDraft(isPick ? hole.par : 'P')} aria-pressed={isPick}
+                className={`block mx-auto mt-3 h-9 px-4 rounded-full text-[13px] font-bold font-display ${isPick ? 'bg-ink text-white' : 'bg-canvas text-ink hover:bg-gray-200'}`}>
+                {isPick ? 'Undo pickup' : 'Picked up (no score on this hole)'}
+              </button>
+            )}
             {shots.length > 0 && !locked && strokes !== shots.length + 1 && (
               <button onClick={() => setDraft(shots.length + 1)} className="block mx-auto mt-3 text-[12px] font-semibold text-pine-600 underline underline-offset-4">
                 Use marked shots ({shots.length} + 1 putt = {shots.length + 1})
@@ -309,10 +343,10 @@ export default function LivePlay({ id }: { id: string }) {
               <ul className="mt-3 space-y-3">
                 {unsettled.map(i => (
                   <li key={i} className="bg-white rounded-2xl p-3.5">
-                    <p className="text-[14px] text-ink"><span className="font-bold">Hole {holes[i].hole}:</span> you {card[i]} · {marker?.name.split(' ')[0] ?? 'marker'} {myMarked[i]}</p>
+                    <p className="text-[14px] text-ink"><span className="font-bold">Hole {holes[i].hole}:</span> you {say(card[i])} · {marker?.name.split(' ')[0] ?? 'marker'} {say(myMarked[i])}</p>
                     <div className="flex flex-wrap gap-2 mt-2.5">
-                      <Button size="sm" onClick={() => { setStrokes(t, me.id, round, i, myMarked[i]); showToast(`Hole ${holes[i].hole} changed to ${myMarked[i]}`) }}>Use {myMarked[i]}</Button>
-                      <Button size="sm" variant="secondary" onClick={() => { setMarkerStrokes(t, me.id, round, i, card[i]); showToast(`${marker?.name.split(' ')[0] ?? 'Marker'} changed their record to ${card[i]}`) }}>Marker changes to {card[i]}</Button>
+                      <Button size="sm" onClick={() => { const m = myMarked[i]; if (m === 'P') setPickup(t, me.id, round, i, me.name); else setStrokes(t, me.id, round, i, m, me.name); showToast(`Hole ${holes[i].hole} changed to ${say(m)}`) }}>Use {say(myMarked[i])}</Button>
+                      <Button size="sm" variant="secondary" onClick={() => { const c = card[i]; if (c === 'P') setMarkerPickup(t, me.id, round, i); else setMarkerStrokes(t, me.id, round, i, c); showToast(`${marker?.name.split(' ')[0] ?? 'Marker'} changed their record to ${say(c)}`) }}>Marker changes to {say(card[i])}</Button>
                       <Button size="sm" variant="ghost" onClick={() => sendToCommittee(i)}>Send to committee</Button>
                     </div>
                   </li>
@@ -327,21 +361,25 @@ export default function LivePlay({ id }: { id: string }) {
               <p className="text-[12px] text-gray-500 mt-0.5">Enter their score for hole {hole.hole}. {marker ? `${marker.name} marks yours.` : ''}</p>
               <ul className="mt-3 space-y-3">
                 {markees.map(p => {
-                  const theirs = cardFor(t, p.id, round)[index]
-                  const mine = markerCardFor(t, p.id, round)[index]
-                  const value = mine ?? hole.par
+                  const theirs = outcomesFor(t, p.id, round)[index]
+                  const mine = markerOutcomesFor(t, p.id, round)[index]
+                  const value = mine === 'P' || mine === null ? hole.par : mine
                   return (
                     <li key={p.id} className="flex items-center gap-3">
                       <span className="flex-1 min-w-0">
                         <span className="block text-[14px] font-semibold text-ink truncate">{p.name}</span>
                         <span className={`block text-[12px] ${mine !== null && theirs !== null && mine !== theirs ? 'text-rose-600 font-semibold' : 'text-gray-500'}`}>
-                          {mine === null ? 'Not entered yet' : theirs === null ? 'Waiting for their score' : mine === theirs ? 'Matches their card ✓' : `They entered ${theirs} — check with them`}
+                          {mine === null ? 'Not entered yet' : theirs === null ? 'Waiting for their score' : mine === theirs ? `${mine === 'P' ? 'Pickup · ' : ''}Matches their card ✓` : `They entered ${say(theirs)} — check with them`}
                         </span>
                       </span>
+                      {pickups && (
+                        <button disabled={locked} onClick={() => setMarkerPickup(t, p.id, round, index)} aria-pressed={mine === 'P'} aria-label={`Pickup for ${p.name}`}
+                          className={`h-10 px-3 rounded-full text-[13px] font-bold disabled:opacity-40 ${mine === 'P' ? 'bg-ink text-white' : 'bg-canvas text-ink'}`}>P</button>
+                      )}
                       <button disabled={locked || value <= 1} onClick={() => setMarkerStrokes(t, p.id, round, index, value - 1)} aria-label={`One fewer for ${p.name}`}
                         className="w-10 h-10 rounded-full bg-canvas text-ink text-[20px] font-bold disabled:opacity-40">−</button>
-                      <span className={`w-8 text-center font-display font-extrabold text-[22px] ${mine === null ? 'text-gray-300' : 'text-ink'}`}>{value}</span>
-                      <button disabled={locked || value >= 15} onClick={() => setMarkerStrokes(t, p.id, round, index, mine === null ? value : value + 1)} aria-label={`${mine === null ? 'Confirm' : 'One more for'} ${p.name}`}
+                      <span className={`w-8 text-center font-display font-extrabold text-[22px] ${mine === null || mine === 'P' ? 'text-gray-300' : 'text-ink'}`}>{value}</span>
+                      <button disabled={locked || value >= 15} onClick={() => setMarkerStrokes(t, p.id, round, index, mine === null || mine === 'P' ? value : value + 1)} aria-label={`${mine === null ? 'Confirm' : 'One more for'} ${p.name}`}
                         className="w-10 h-10 rounded-full bg-canvas text-ink text-[20px] font-bold disabled:opacity-40">{mine === null ? '✓' : '+'}</button>
                     </li>
                   )
@@ -387,7 +425,7 @@ export default function LivePlay({ id }: { id: string }) {
       {/* Card */}
       <section className="bg-white rounded-[28px] shadow-card p-6 mt-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 className="font-display font-bold text-ink text-[18px]">My scorecard</h2>
+          <h2 className="font-display font-bold text-ink text-[18px]">{scramble ? 'Team scorecard' : 'My scorecard'}{stableford && row ? <span className="text-[14px] text-gray-500 font-semibold"> · {row.points} pts{row.pickups ? ` · ${row.pickups} pickup${row.pickups > 1 ? 's' : ''}` : ''}</span> : null}</h2>
           {locked
             ? <span className="text-[13px] font-semibold text-pine-600">{out ? `${ROUND_STATUS_LABEL[out]} — left out of the results` : cardState(t.id, me.id, round) === 'verified' ? 'Verified by the committee' : 'Submitted — awaiting verification'}</span>
             : <span className="flex items-center gap-3">
@@ -401,7 +439,7 @@ export default function LivePlay({ id }: { id: string }) {
               <button key={h.hole} onClick={() => goTo(i)} className={`flex flex-col items-center gap-1 w-9 rounded-xl py-1 ${i === index ? 'bg-canvas' : ''}`}>
                 <span className="text-[10px] font-bold text-gray-400">{h.hole}</span>
                 <span className="text-[10px] text-gray-400">P{h.par}</span>
-                <span className={unsettled.includes(i) ? 'rounded-lg ring-2 ring-rose-400' : ''}><ScoreCell strokes={card[i]} par={h.par} /></span>
+                <span className={unsettled.includes(i) ? 'rounded-lg ring-2 ring-rose-400' : ''}><HoleCell v={card[i]} par={h.par} /></span>
                 <span className={`text-[10px] font-semibold ${unsettled.includes(i) ? 'text-rose-600' : 'text-gray-300'}`}>{myMarked[i] ?? '·'}</span>
               </button>
             ))}
