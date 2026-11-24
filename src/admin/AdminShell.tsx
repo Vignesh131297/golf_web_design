@@ -110,6 +110,8 @@ const NAV = [
   { label: 'Dashboard',   href: '#/admin',             Icon: IconDashboard, match: ['admin'] },
   { label: 'Tournaments', href: '#/admin/tournaments', Icon: IconTrophy,    match: ['admin-tournaments', 'admin-tournament-edit', 'admin-tournament-live'] },
   { label: 'Courses',     href: '#/admin/courses',     Icon: IconFlag,      match: ['admin-courses', 'admin-course-edit', 'admin-course-import'] },
+  // Proposal for AJ (24 Nov 2026): a separate register of holes-in-one across tournaments
+  { label: 'Hole-in-One', href: '#/admin/hole-in-one', Icon: IconTrophy,    match: ['admin-hole-in-one'] },
   { label: 'Organisation', href: '#/admin/organisation', Icon: IconBuilding, match: ['admin-organisation'] },
   { label: 'Organizers',  href: '#/admin/organizers',  Icon: IconBuilding,  match: ['admin-organizers'] },
   { label: 'Roles & permissions', href: '#/admin/roles', Icon: IconShield,   match: ['admin-roles', 'admin-role-edit'] },
@@ -121,6 +123,7 @@ const NAV_PERM: Record<string, string> = {
   Dashboard: 'dashboard.view',
   Tournaments: 'tournaments.view',
   Courses: 'courses.view',
+  'Hole-in-One': 'tournaments.view',
   Organisation: 'organisation.view',
   Organizers: 'organizers.view',
   'Roles & permissions': 'roles.view',

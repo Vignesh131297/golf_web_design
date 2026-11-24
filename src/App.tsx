@@ -1,3 +1,4 @@
+import { AdminHoleInOne } from './admin/HoleInOne'
 import { useEffect } from 'react'
 import { CourseImport } from './admin/CourseImport'
 import './store' // load any saved admin edits before the first render
@@ -82,6 +83,7 @@ function Routes() {
         case 'admin-users':           return <AdminUsers key={key} />
         case 'admin-organisation':    return <AdminOrganisation key={key} />
         case 'admin-organizers':      return <AdminOrganizers key={key} />
+        case 'admin-hole-in-one':     return <AdminHoleInOne key={key} />
         default:                      return <NotFound home="/admin" />
       }
     })()

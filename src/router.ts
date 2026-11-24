@@ -29,6 +29,7 @@ export type Route =
   | { name: 'admin-users' }
   | { name: 'admin-organisation' }
   | { name: 'admin-organizers' }
+  | { name: 'admin-hole-in-one' }
   | { name: 'organizer-setup' }
   | { name: 'staff' }
   | { name: 'staff-event'; id: string; tab?: string }
@@ -52,6 +53,7 @@ export function parseHash(hash: string): Route {
     if (b === 'users' && !c) return { name: 'admin-users' }
     if (b === 'organisation' && !c) return { name: 'admin-organisation' }
     if (b === 'organizers' && !c) return { name: 'admin-organizers' }
+    if (b === 'hole-in-one' && !c) return { name: 'admin-hole-in-one' }
     return { name: 'not-found' }
   }
   if (a === 'staff') return b ? { name: 'staff-event', id: b, tab: c } : { name: 'staff' }

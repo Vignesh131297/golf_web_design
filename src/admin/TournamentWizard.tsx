@@ -26,6 +26,7 @@ import { isSelectable } from './course-setup'
 import { sendInvite, slotStatus, staffRoleOf } from '../ops'
 import { SlotChip } from '../ops-ui'
 import { SCRAMBLE_ALLOWANCES } from '../golf'
+import { HandicapExample } from './HandicapExample'
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -485,6 +486,7 @@ function Scoring({ t, set, e }: SectionProps) {
           )}
         </>
       )}
+      {!scratch && <HandicapExample course={courseOf(t)} allowancePct={s.allowancePct} />}
       <Segmented label="Results shown" required value={s.basis} onChange={v => update({ basis: v })}
         options={[{ value: 'gross', label: 'Gross' }, { value: 'net', label: 'Net', disabled: scratch }, { value: 'gross-and-net', label: 'Gross and net', disabled: scratch }]}
         hint={t.format === 'Stableford' ? 'Stableford ranks by points; this sets which points (gross or net) count.' : undefined} />

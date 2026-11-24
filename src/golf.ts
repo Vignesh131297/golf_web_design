@@ -287,11 +287,27 @@ export function stablefordPoints(strokes: number, par: number, received: number)
   return Math.max(0, 2 + par + received - strokes)
 }
 
+/**
+ * The result name for a hole, from gross strokes against par. Terms confirmed by AJ (Sprint 4 demo,
+ * 24 Nov 2026): Hole-in-One, Albatross, Eagle, Birdie, Par, Bogey, Double Bogey, Triple Bogey.
+ * A hole-in-one is named first, whatever the par (on a par 4 it is also an albatross).
+ */
 export const scoreLabel = (strokes: number, par: number) => {
   const d = strokes - par
-  if (strokes === 1) return 'Ace'
-  return d <= -3 ? 'Albatross' : d === -2 ? 'Eagle' : d === -1 ? 'Birdie' : d === 0 ? 'Par' : d === 1 ? 'Bogey' : d === 2 ? 'Double' : `+${d}`
+  if (strokes === 1) return 'Hole-in-One'
+  return d <= -3 ? 'Albatross' : d === -2 ? 'Eagle' : d === -1 ? 'Birdie' : d === 0 ? 'Par' : d === 1 ? 'Bogey' : d === 2 ? 'Double Bogey' : d === 3 ? 'Triple Bogey' : `+${d}`
 }
+
+/**
+ * Pick-up point (display only — proposal for AJ to confirm, 25 Nov 2026). AJ: "please pick up your ball
+ * after double bogey", counted net: par + handicap strokes on the hole + 2. Example from the call: par 4,
+ * handicap 12 on a stroke index 15 hole gets no stroke → pick up after 6; handicap 18 gets one → after 7.
+ * Stableford already gives 0 points from this score, so nothing else in the scoring changes.
+ */
+export const pickupAfter = (par: number, received: number) => par + received + 2
+
+/** "net double bogey" / "double bogey" for the pick-up message */
+export const pickupName = (received: number) => (received > 0 ? 'net double bogey' : 'double bogey')
 
 export const toPar = (n: number) => (n === 0 ? 'E' : n > 0 ? `+${n}` : `${n}`)
 
