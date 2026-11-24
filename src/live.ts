@@ -1,3 +1,4 @@
+import { capacityOf, fullMessage, type Capacity } from './capacity'
 import { useSyncExternalStore } from 'react'
 import type { Course, HoleData, Point, Tournament } from './types'
 import { MOCK_PROFILE, MOCK_TOURNAMENTS, getCourse } from './data'
@@ -91,7 +92,7 @@ interface LiveData {
 }
 
 // v2: entries carry registeredBy / paymentStatus; groups seeded for pace of play
-const STORAGE_KEY = 'gtp-live-v5' // v5: Sprint 4 pickups, scramble team card, demo events
+const STORAGE_KEY = 'gtp-live-v6' // v6: Sprint 5 team-capacity demo (t11)
 
 const FIRST = ['James', 'Olivia', 'Liam', 'Emma', 'Noah', 'Ava', 'Ethan', 'Sophia', 'Lucas', 'Mia', 'Mason', 'Isla', 'Logan', 'Grace', 'Owen', 'Chloe', 'Caleb', 'Zoe', 'Ryan', 'Nora', 'Henry', 'Ella', 'Jack', 'Lily']
 const LAST = ['Carter', 'Nguyen', 'Patel', 'Walsh', 'Brennan', 'Okafor', 'Lindqvist', 'Moreno', 'Fraser', 'Kim', 'Duarte', 'Shaw', 'Hughes', 'Rossi', 'Tanaka', 'Murphy', 'Becker', 'Lopez', 'Reid', 'Silva', 'Ahmed', 'Grant', 'Cole', 'Price']
@@ -228,6 +229,12 @@ export const entriesFor = (tournamentId: string) => data.entries.filter(e => e.t
 
 export const myEntry = (tournamentId: string) => entriesFor(tournamentId).find(e => e.isMe)
 
+/** Sprint 5 · #190: registered teams and golfers against the limits, from the field records */
+export function fieldCapacity(t: Tournament): Capacity {
+  const field = entriesFor(t.id).filter(e => e.status === 'registered')
+  return capacityOf(t, Math.max(t.players, field.length), field.map(e => e.teamId))
+}
+
 /** The tournament's player count covers the whole field; the seeded entries are only a sample of it. */
 function adjustPlayers(tournamentId: string, delta: number) {
   const t = MOCK_TOURNAMENTS.find(x => x.id === tournamentId)
@@ -282,7 +289,9 @@ export interface NewEntryInput {
  */
 export function addEntry(t: Tournament, input: NewEntryInput): { ok: true; entry: Entry } | { ok: false; error: string; field?: 'email' | 'capacity' } {
   const field = entriesFor(t.id).filter(e => e.status === 'registered')
-  if (Math.max(t.players, field.length) >= t.maxPlayers) return { ok: false, field: 'capacity', error: 'The field is full — there is no waiting list.' }
+  // Sprint 5 · #191 / #192: team events check the team limit as well as the golfer limit
+  const cap = fieldCapacity(t)
+  if (cap.full) return { ok: false, field: 'capacity', error: fullMessage(cap) }
   const email = input.email.trim().toLowerCase()
   if (field.some(e => e.email?.toLowerCase() === email)) return { ok: false, field: 'email', error: 'This golfer is already registered.' }
   const entry: Entry = {

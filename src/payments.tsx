@@ -14,13 +14,17 @@ const digits = (v: string) => v.replace(/\D/g, '')
 const cardFormat = (v: string) => digits(v).slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ')
 const expiryFormat = (v: string) => { const d = digits(v).slice(0, 4); return d.length > 2 ? `${d.slice(0, 2)} / ${d.slice(2)}` : d }
 
-export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }: {
+export function PaymentSheet({ title, lines, total, currency, onPaid, onClose, onCancel, onPending }: {
   title: string
   lines: [string, string][]
   total: number
   currency: string
   onPaid: () => void
   onClose: () => void
+  /** Sprint 5 · #204: closed before paying — nothing charged, not registered */
+  onCancel?: () => void
+  /** Sprint 5 · #204: the bank hasn't confirmed yet (e.g. 3-D Secure still open) — not registered yet */
+  onPending?: () => void
 }) {
   const [card, setCard] = useState('')
   const [expiry, setExpiry] = useState('')
@@ -28,7 +32,25 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
   const [name, setName] = useState('')
   const [error, setError] = useState('')
   const [coupon, setCoupon] = useState<Coupon | null>(null)
-  const [state, setState] = useState<'idle' | 'paying' | 'declined'>('idle')
+  // Sprint 5 · #204: the card form closing is never proof of payment. We register the golfer only once the
+  // payment is confirmed (in production: Stripe's webhook, then the app re-reads the entry).
+  const [state, setState] = useState<'idle' | 'paying' | 'confirming' | 'pending' | 'declined'>('idle')
+
+  function confirmed() {
+    setState('confirming')
+    setTimeout(() => {
+      onPaid()
+      // Every payment earns a Golaf.ca discount (client, 21 Oct call)
+      setCoupon(issueCoupon(title))
+      setState('idle')
+    }, 1500)
+  }
+
+  function close() {
+    if (state === 'pending') onPending?.()
+    else if (state !== 'confirming') onCancel?.()
+    onClose()
+  }
 
   function pay(e?: FormEvent) {
     e?.preventDefault()
@@ -41,10 +63,9 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
     // Stripe test cards: 4000 0000 0000 0002 is declined; anything else succeeds in the prototype
     setTimeout(() => {
       if (digits(card) === '4000000000000002') return setState('declined')
-      onPaid()
-      // Every payment earns a Golaf.ca discount (client, 21 Oct call)
-      setCoupon(issueCoupon(title))
-      setState('idle')
+      // Stripe's 3-D Secure test card: the bank hasn't confirmed yet
+      if (digits(card) === '4000002500003155') return setState('pending')
+      confirmed()
     }, 1300)
   }
 
@@ -60,10 +81,10 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
   }
 
   return (
-    <Modal title={title} subtitle="Secure payment by Stripe. You’ll get a receipt by email." onClose={onClose}
+    <Modal title={title} subtitle="Secure payment by Stripe. You’ll get a receipt by email." onClose={close}
       footer={<>
-        <Button variant="secondary" fullWidth onClick={onClose}>Cancel</Button>
-        <Button fullWidth loading={state === 'paying'} onClick={() => pay()}>{state === 'paying' ? 'Paying…' : `Pay ${formatMoney(total, currency)}`}</Button>
+        <Button variant="secondary" fullWidth onClick={close}>{state === 'pending' ? 'Close' : 'Cancel'}</Button>
+        <Button fullWidth disabled={state === 'confirming' || state === 'pending'} loading={state === 'paying' || state === 'confirming'} onClick={() => pay()}>{state === 'paying' ? 'Paying…' : state === 'confirming' ? 'Confirming…' : `Pay ${formatMoney(total, currency)}`}</Button>
       </>}>
       <div className="rounded-2xl bg-canvas px-4 py-3 space-y-1.5">
         {lines.map(([label, value]) => (
@@ -71,7 +92,7 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
         ))}
         <div className="flex justify-between pt-2 border-t border-black/[0.06] text-[15px]"><span className="font-bold text-ink">Total</span><span className="font-display font-extrabold text-ink">{formatMoney(total, currency)}</span></div>
       </div>
-      {state === 'declined' && <p className="rounded-2xl bg-rose-50 text-rose-700 text-[13px] font-semibold px-4 py-3">Your card was declined. Try another card — nothing was charged.</p>}
+      <PaymentStatus state={state} onCheck={confirmed} />
       <form onSubmit={pay} className="space-y-3" noValidate>
         <Input label="Card number" inputMode="numeric" autoComplete="cc-number" placeholder="1234 1234 1234 1234" value={card} onChange={e => setCard(cardFormat(e.target.value))} />
         <div className="grid grid-cols-2 gap-3">
@@ -81,9 +102,30 @@ export function PaymentSheet({ title, lines, total, currency, onPaid, onClose }:
         <Input label="Name on card" autoComplete="cc-name" value={name} error={error} onChange={e => setName(e.target.value)} />
         <button type="submit" hidden />
       </form>
-      <p className="text-[11px] text-gray-400 leading-relaxed">Prototype: no real payment is taken. Stripe test card 4242 4242 4242 4242 succeeds; 4000 0000 0000 0002 is declined.</p>
+      <p className="text-[11px] text-gray-400 leading-relaxed">Prototype: no real payment is taken. Stripe test card 4242 4242 4242 4242 succeeds; 4000 0000 0000 0002 is declined; 4000 0025 0000 3155 stays pending (3-D Secure).</p>
     </Modal>
   )
+}
+
+/** Sprint 5 · #204: what the golfer sees while the payment is confirmed, pending or failed */
+function PaymentStatus({ state, onCheck }: { state: string; onCheck: () => void }) {
+  if (state === 'confirming') return (
+    <div className="rounded-2xl bg-sky-50 text-sky-900 px-4 py-3 text-[13px] leading-relaxed">
+      <p className="font-bold font-display">Confirming your payment…</p>
+      <p className="mt-0.5">You’re registered as soon as Stripe confirms it. Don’t close this yet.</p>
+    </div>
+  )
+  if (state === 'pending') return (
+    <div className="rounded-2xl bg-amber-50 text-amber-900 px-4 py-3 text-[13px] leading-relaxed">
+      <p className="font-bold font-display">Payment is processing</p>
+      <p className="mt-0.5">Your bank hasn’t confirmed it yet. We’ll confirm your entry by email and in the app — you’re not registered until then.</p>
+      <button type="button" onClick={onCheck} className="mt-2 h-9 px-4 rounded-full bg-amber-900 text-white text-[12px] font-bold font-display">Check again</button>
+    </div>
+  )
+  if (state === 'declined') return (
+    <p className="rounded-2xl bg-rose-50 text-rose-700 text-[13px] font-semibold px-4 py-3">Payment didn’t go through. You haven’t been charged — try another card.</p>
+  )
+  return null
 }
 
 /** The Golaf.ca reward a payment earns, shown right after paying and on the profile */

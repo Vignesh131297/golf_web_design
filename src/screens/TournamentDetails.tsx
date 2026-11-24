@@ -1,3 +1,4 @@
+import { fullMessage } from '../capacity'
 import { useState, type ReactNode } from 'react'
 import type { Division, Tournament } from '../types'
 import {
@@ -12,7 +13,7 @@ import { useApp } from '../app-context'
 import { navigate } from '../router'
 import { useFakeLoad } from '../shell'
 import { useDataVersion } from '../store'
-import { entriesFor, groupOf, myEntry, registerMe, registrantsFor, ticksFor, useLiveVersion, withdrawMe } from '../live'
+import { entriesFor, fieldCapacity, groupOf, myEntry, registerMe, registrantsFor, ticksFor, useLiveVersion, withdrawMe } from '../live'
 import {
   TIE_BREAK_OPTIONS, isoDate, isoLocalDateTime, formatClock, formatDateTime, formatDay, formatMoney, teeSwatch, teeTotal,
   divisionForGolfer, feeUnit, withTax,
@@ -180,7 +181,9 @@ export default function TournamentDetails({ id }: { id: string }) {
   const me = myEntry(t.id)
   const field = entriesFor(t.id).filter(e => e.status === 'registered')
   const players = Math.max(t.players, field.length)
-  const spotsLeft = t.maxPlayers - players
+  // Sprint 5 · #191: team events fill by teams; the count comes from the field records
+  const cap = fieldCapacity(t)
+  const spotsLeft = cap.full ? 0 : cap.remainingGolfers
   const fees = t.fees!
   const reg = t.registration!
   const now = isoLocalDateTime()
@@ -217,7 +220,9 @@ export default function TournamentDetails({ id }: { id: string }) {
     }
     if (!myDivision) { showToast('No division matches your handicap', 'error'); return }
     // No waiting list (client answer T-04): a full field simply closes
-    if (spotsLeft <= 0) { showToast('The field is full — contact the organiser', 'info'); return }
+    // Re-check at the moment of registering: the field may have filled since the page loaded
+    const latest = fieldCapacity(t!)
+    if (latest.full) { showDialog({ title: 'Registration is full', message: fullMessage(latest), confirmLabel: 'OK', cancelLabel: 'Close', onConfirm: () => {} }); return }
     // Online payment from the first release (client answer T-06)
     if (withTax(priceNow, fees) > 0) { setPaying(true); return }
     showDialog({
@@ -248,7 +253,7 @@ export default function TournamentDetails({ id }: { id: string }) {
     : isClosed || !windowOpen ? <Button variant="ghost" disabled fullWidth>{now < reg.opensAt ? `Opens ${formatDateTime(reg.opensAt)}` : 'Registration closed'}</Button>
     : isComingSoon ? <Button fullWidth onClick={() => showToast("You'll be notified when registration opens")}>Notify me</Button>
     : problem ? <Button variant="ghost" disabled fullWidth>Not eligible</Button>
-    : spotsLeft <= 0 ? <Button variant="ghost" disabled fullWidth>Field is full</Button>
+    : spotsLeft <= 0 ? <Button variant="ghost" disabled fullWidth>Registration full</Button>
     : <Button fullWidth onClick={register}>{withTax(priceNow, fees) > 0 ? `Register & pay ${formatMoney(withTax(priceNow, fees), fees.currency)}` : 'Register now'}</Button>
 
   const scoring = t.scoring!
@@ -293,7 +298,7 @@ export default function TournamentDetails({ id }: { id: string }) {
             <InfoTile icon={<IconCalendar />} label="Date" value={t.dateRange} />
             <InfoTile icon={<IconClock />} label={sheet.startType === 'shotgun' ? 'Shotgun' : 'First tee'} value={formatClock(sheet.firstTeeTime)} />
             <InfoTile icon={<IconCourse />} label="Format" value={`${t.format}${t.format !== 'Stableford' ? ` · ${scoring.basis === 'gross-and-net' ? 'gross & net' : scoring.basis}` : ''}`} />
-            <InfoTile icon={<IconUsers />} label="Field" value={`${players} / ${t.maxPlayers}`} />
+            <InfoTile icon={<IconUsers />} label="Field" value={cap.team ? `${cap.registeredTeams} / ${cap.maxTeams ?? '—'} teams` : `${players} / ${t.maxPlayers}`} />
           </div>
 
           <Card title="About this tournament">
@@ -437,7 +442,7 @@ export default function TournamentDetails({ id }: { id: string }) {
           {isWaitlisted && <Notice tone="amber" title="You're on the waiting list" body="We'll email you if a spot opens up." />}
           {isOpen && !isRegistered && !isWaitlisted && problem && <Notice tone="amber" title="Not eligible" body={problem} />}
           {isOpen && !isRegistered && !isWaitlisted && !problem && (
-            <div className="bg-canvas rounded-2xl p-4"><SpotsBar players={players} maxPlayers={t.maxPlayers} /></div>
+            <div className="bg-canvas rounded-2xl p-4"><SpotsBar players={players} maxPlayers={t.maxPlayers} cap={cap} /></div>
           )}
           {isClosed && <Notice tone="rose" title="Registration closed" body="The registration period for this tournament has ended." />}
           {isComingSoon && <Notice tone="amber" title="Registration opening soon" body={reg.opensAt ? `Opens ${formatDateTime(reg.opensAt)}.` : 'Registration details will be announced shortly.'} />}
@@ -463,6 +468,8 @@ export default function TournamentDetails({ id }: { id: string }) {
       <div className="mt-8 max-w-[760px]"><MoreTournaments excludeId={t.id} /></div>
       {paying && myDivision && (
         <PaymentSheet title={`Enter ${t.name}`} currency={fees.currency} total={withTax(priceNow, fees)} onClose={() => setPaying(false)}
+          onCancel={() => showToast("Payment cancelled — you haven't been charged and you're not registered yet", 'info')}
+          onPending={() => showToast("Payment is processing — we'll confirm your entry by email and in the app", 'info')}
           lines={[
             ['Division', myDivision.name],
             [earlyBird ? 'Entry (early bird)' : MOCK_PROFILE.membership === 'Member' && fees.memberAmount !== undefined ? 'Entry (member)' : 'Entry', formatMoney(priceNow, fees.currency)],

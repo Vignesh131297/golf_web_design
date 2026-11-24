@@ -1,3 +1,4 @@
+import { capacityOf } from '../capacity'
 import { useState } from 'react'
 import type { Tournament } from '../types'
 import { Button, EmptyState, StatusBadge } from '../components'
@@ -51,6 +52,8 @@ export function AdminTournamentLive({ id }: { id: string }) {
   const actor: Actor = consoleActor ?? { name: 'Organiser', role: 'organiser' }
   const field = entriesFor(t.id)
   const registered = field.filter(e => e.status === 'registered')
+  // Sprint 5 · #190: teams and golfers for team events
+  const cap = capacityOf(t, Math.max(t.players, registered.length), registered.map(e => e.teamId))
   const groups = groupsFor(t.id, round)
   const canRun = can('tournaments.status')
   const canScore = can('tournaments.status') || can('courses.scorecard')
@@ -135,7 +138,9 @@ export function AdminTournamentLive({ id }: { id: string }) {
       )}
 
       <StatRow items={[
-        { label: 'Players', value: `${Math.max(t.players, registered.length)} / ${t.maxPlayers}`, tone: 'dark' },
+        cap.team
+          ? { label: 'Teams · golfers', value: `${cap.registeredTeams} / ${cap.maxTeams ?? '—'} · ${cap.registeredGolfers}`, tone: 'dark' }
+          : { label: 'Players', value: `${cap.registeredGolfers} / ${t.maxPlayers}`, tone: 'dark' },
         { label: 'Cards verified', value: `${verified} / ${inField.length}` },
         { label: 'Waiting for a decision', value: decisions, tone: decisions ? 'warn' : undefined },
         { label: 'Groups behind pace', value: flagged },
