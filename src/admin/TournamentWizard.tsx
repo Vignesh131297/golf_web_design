@@ -539,8 +539,15 @@ function Registration({ t, set, e, registered }: SectionProps) {
           hint="Shown to golfers before they register" />
       </div>
       <div className="grid md:grid-cols-2 gap-4">
-        <Input label={`Maximum ${unit} *`} type="number" min={1} value={t.maxPlayers || ''} onChange={x => set({ maxPlayers: Number(x.target.value) })} error={e.maxPlayers}
-          hint={registered ? `${registered} registered so far` : undefined} />
+        {isTeam(t) ? (
+          // Sprint 5 · #189: teams and golfers are separate limits; golfers = teams × team size
+          <Input label="Maximum teams *" type="number" min={1} step={1} value={r.maxTeams ?? ''} error={e.maxPlayers}
+            onChange={x => { const v = x.target.value === '' ? undefined : Number(x.target.value); set({ registration: { ...r, maxTeams: v }, maxPlayers: (v ?? 0) * t.team!.size }) }}
+            hint={r.maxTeams ? `Up to ${r.maxTeams * t.team!.size} golfers (teams of ${t.team!.size})${registered ? ` · ${registered} golfers registered so far` : ''}` : `Golfer limit is worked out from this (teams of ${t.team!.size})`} />
+        ) : (
+          <Input label={`Maximum ${unit} *`} type="number" min={1} value={t.maxPlayers || ''} onChange={x => set({ maxPlayers: Number(x.target.value) })} error={e.maxPlayers}
+            hint={registered ? `${registered} registered so far` : undefined} />
+        )}
         <Input label={`Minimum ${unit}`} type="number" min={1} placeholder="Optional" value={r.minPlayers ?? ''} error={e.minPlayers}
           onChange={x => update({ minPlayers: x.target.value === '' ? undefined : Number(x.target.value) })} hint="You'll be warned if it isn't reached" />
       </div>
@@ -867,7 +874,9 @@ function Review({ t, errors, warnings, onEdit, action }: { t: Tournament; errors
     ] },
     { title: 'Registration & fees', edit: 'registration', rows: [
       ['Opens', dt(t.registration!.opensAt)], ['Closes', dt(t.registration!.closesAt)],
-      ['Field', `${t.registration!.minPlayers ? `${t.registration!.minPlayers}–` : 'up to '}${t.maxPlayers || '—'} ${isTeam(t) ? 'teams' : 'players'}`],
+      ['Field', isTeam(t)
+        ? `${t.registration!.minPlayers ? `${t.registration!.minPlayers}–` : 'up to '}${t.registration!.maxTeams || '—'} teams (${(t.registration!.maxTeams ?? 0) * t.team!.size} golfers)`
+        : `${t.registration!.minPlayers ? `${t.registration!.minPlayers}–` : 'up to '}${t.maxPlayers || '—'} players`],
       ['Fee', fee], ['Free withdrawal until', t.registration!.allowWithdrawal ? dt(t.registration!.withdrawBy) : 'Withdrawal not allowed'],
     ] },
     { title: 'Tee sheet & officials', edit: 'teesheet', rows: [
@@ -893,7 +902,7 @@ function Review({ t, errors, warnings, onEdit, action }: { t: Tournament; errors
           <div className="relative min-w-0">
             <p className="text-[12px] font-bold font-display text-lime-400">{t.category || 'Tournament'} · {t.format}</p>
             <h2 className="text-[22px] font-extrabold font-display text-white tracking-tight truncate">{t.name || 'Untitled tournament'}</h2>
-            <p className="text-[13px] text-white/60">{rounds.length ? `${formatDay(rounds[0].date)}${rounds.length > 1 ? ` – ${formatDay(rounds[rounds.length - 1].date)}` : ''}` : 'No dates yet'} · {course?.name ?? 'No course'} · {t.maxPlayers || '—'} {isTeam(t) ? 'teams' : 'players'} · {fee}</p>
+            <p className="text-[13px] text-white/60">{rounds.length ? `${formatDay(rounds[0].date)}${rounds.length > 1 ? ` – ${formatDay(rounds[rounds.length - 1].date)}` : ''}` : 'No dates yet'} · {course?.name ?? 'No course'} · {isTeam(t) ? `${t.registration!.maxTeams || '—'} teams` : `${t.maxPlayers || '—'} players`} · {fee}</p>
           </div>
         </div>
         <div className="grid lg:grid-cols-2 gap-5">

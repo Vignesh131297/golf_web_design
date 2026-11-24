@@ -1,3 +1,4 @@
+import { capacityOf } from '../capacity'
 import { useState } from 'react'
 import type { Tournament, TournamentStatus } from '../types'
 import { useDataVersion, deleteTournament, setTournamentStatus, STATUS_OPTIONS } from '../store'
@@ -130,7 +131,8 @@ export function AdminTournaments() {
               </thead>
               <tbody className="divide-y divide-black/[0.05]">
                 {rows.map(t => {
-                  const pct = Math.min(100, Math.round((t.players / t.maxPlayers) * 100))
+                  const cap = capacityOf(t, t.players)
+                  const pct = Math.min(100, Math.round((cap.team && cap.maxTeams ? cap.registeredTeams! / cap.maxTeams : t.players / t.maxPlayers) * 100))
                   return (
                     <tr key={t.id} className="hover:bg-canvas/60 transition-colors">
                       <td className="py-3.5 pl-6 pr-3">
@@ -147,7 +149,8 @@ export function AdminTournaments() {
                         {adminOrg ? t.venue : (organizerName(t.organizerId) ?? <span className="text-gray-400">Platform</span>)}
                       </td>
                       <td className="py-3.5 px-3 w-36">
-                        <p className="text-[12px] font-semibold text-gray-600">{t.players} / {t.maxPlayers}</p>
+                        <p className="text-[12px] font-semibold text-gray-600">{cap.team ? `${cap.registeredTeams} / ${cap.maxTeams ?? '—'} teams` : `${t.players} / ${t.maxPlayers}`}</p>
+                        {cap.team && <p className="text-[11px] text-gray-400">{cap.registeredGolfers} golfers</p>}
                         <div className="h-1.5 bg-canvas rounded-full overflow-hidden mt-1"><div className={`h-full rounded-full ${pct >= 90 ? 'bg-rose-400' : 'bg-lime-500'}`} style={{ width: `${pct}%` }} /></div>
                       </td>
                       <td className="py-3.5 px-3"><StatusSelect t={t} /></td>

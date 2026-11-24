@@ -170,6 +170,8 @@ export interface RegistrationWindow {
   withdrawBy: string
   refundPolicy: string
   minPlayers?: number
+  /** Sprint 5 · #189: team events only — the team limit. The golfer limit is maxTeams × team size. */
+  maxTeams?: number
   /** Golfers register themselves, the organiser adds them, or both */
   method?: 'self' | 'organizer' | 'both'
   allowWithdrawal?: boolean

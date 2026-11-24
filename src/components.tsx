@@ -1,3 +1,4 @@
+import { capacityOf, type Capacity } from './capacity'
 import { useState, type ReactNode, type InputHTMLAttributes } from 'react'
 import type { TournamentStatus, RegistrationStatus, Tournament } from './types'
 import { PHONE_CODES, splitPhone, joinPhone } from './account-rules'
@@ -750,17 +751,22 @@ export function DateTile({ date, dark }: { date: string; dark?: boolean }) {
 
 /* ─────────────────────────── Progress ─────────────────────────── */
 
-export function SpotsBar({ players, maxPlayers }: { players: number; maxPlayers: number }) {
-  const spotsLeft = maxPlayers - players
-  const pct = Math.min(100, (players / maxPlayers) * 100)
+export function SpotsBar({ players, maxPlayers, cap }: { players: number; maxPlayers: number; cap?: Capacity }) {
+  // Sprint 5 · #190: team events count teams and golfers separately
+  const team = cap?.team && cap.maxTeams !== undefined
+  const used = team ? cap!.registeredTeams! : players
+  const limit = team ? cap!.maxTeams! : maxPlayers
+  const spotsLeft = cap?.full ? 0 : limit - used
+  const pct = Math.min(100, (used / limit) * 100)
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <span className="text-[12px] text-gray-500 font-medium">
-          <span className="text-ink font-bold">{players}</span> / {maxPlayers} players
+          <span className="text-ink font-bold">{used}</span> / {limit} {team ? `teams · ${cap!.registeredGolfers} golfers` : 'players'}
         </span>
-        <span className={`text-[12px] font-bold font-display ${spotsLeft <= 10 ? 'text-rose-600' : 'text-pine-600'}`}>
-          {spotsLeft > 0 ? `${spotsLeft} spots left` : 'Full'}
+        <span className={`text-[12px] font-bold font-display ${spotsLeft <= (team ? 2 : 10) ? 'text-rose-600' : 'text-pine-600'}`}>
+          {spotsLeft > 0 ? `${spotsLeft} ${team ? (spotsLeft === 1 ? 'team place' : 'team places') : 'spots'} left`
+            : team && !cap!.full && cap!.partnerPlaces ? `${cap!.partnerPlaces} partner place${cap!.partnerPlaces === 1 ? '' : 's'} left` : 'Full'}
         </span>
       </div>
       <div className="h-2 bg-canvas rounded-full overflow-hidden">
@@ -844,7 +850,7 @@ export function TournamentCard({ tournament, onPress, compact }: TournamentCardP
 
         {regStatus === 'open' && tournament.maxPlayers > 0 && (
           <div className="mt-3.5">
-            <SpotsBar players={tournament.players} maxPlayers={tournament.maxPlayers} />
+            <SpotsBar players={tournament.players} maxPlayers={tournament.maxPlayers} cap={capacityOf(tournament, tournament.players)} />
           </div>
         )}
 

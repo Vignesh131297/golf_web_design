@@ -128,7 +128,11 @@ export function fromExisting(t: Tournament): Tournament {
     rounds: d.rounds!.map(r => ({ ...r, name: r.name ?? `Round ${r.number}` })),
     scoring: { ...d.scoring!, usage: d.scoring!.usage ?? 'handicap', lockDate: d.scoring!.lockDate ?? lockDateFor(firstRound), playoffHoles: d.scoring!.playoffHoles ?? [] },
     divisions: d.divisions!.map(x => ({ ...x, gender: x.gender ?? 'any' })),
-    registration: { method: 'self', allowWithdrawal: !!d.registration!.withdrawBy, ...d.registration! },
+    registration: {
+      method: 'self', allowWithdrawal: !!d.registration!.withdrawBy, ...d.registration!,
+      // Sprint 5 · D1: older team events stored only a golfer count; the team limit is derived from it
+      maxTeams: d.registration!.maxTeams ?? (team && d.maxPlayers ? Math.floor(d.maxPlayers / (d.team?.size ?? (d.format === 'Scramble' ? 4 : 2))) : undefined),
+    },
     fees: { ...d.fees!, type: d.fees!.type ?? (d.fees!.amount === 0 ? 'free' : d.fees!.perTeam ? 'per-team' : 'per-player') },
     teeSheet: { pairing: 'automatic', publishAt: '', ...d.teeSheet! },
     pace: d.pace ?? { targetMinutes: 255, flagMinutes: 10 },
@@ -275,11 +279,13 @@ export function validateSection(key: SectionKey, t: Tournament, ctx: Ctx): Error
       if (!r.closesAt) e.closesAt = 'When does registration close?'
       else if (r.opensAt && r.closesAt <= r.opensAt) e.closesAt = 'Must be after registration opens'
       else if (first && r.closesAt.slice(0, 10) >= first) e.closesAt = 'Must close before round 1'
-      const max = t.maxPlayers
+      // Sprint 5 · #189: team events limit teams; the golfer limit is teams × team size
+      const max = isTeam(t) ? r.maxTeams ?? 0 : t.maxPlayers
       const unit = isTeam(t) ? 'teams' : 'players'
-      if (!(max >= 1)) e.maxPlayers = `Enter the maximum number of ${unit}`
+      const size = isTeam(t) ? t.team!.size : 1
+      if (!Number.isInteger(max) || !(max >= 1)) e.maxPlayers = `Enter a whole number of 1 or more`
       else if (!isTeam(t) && max < t.teeSheet!.groupSize) e.maxPlayers = `At least one group (${t.teeSheet!.groupSize} players)`
-      else if (max < ctx.registered) e.maxPlayers = `${ctx.registered} are already registered`
+      else if (max * size < ctx.registered) e.maxPlayers = isTeam(t) ? `${ctx.registered} golfers are already registered — that needs at least ${Math.ceil(ctx.registered / size)} teams` : `${ctx.registered} are already registered`
       if (r.minPlayers !== undefined && max && r.minPlayers > max) e.minPlayers = 'Must be ≤ the maximum'
       if (r.allowWithdrawal) {
         if (!r.withdrawBy) e.withdrawBy = 'Until when can golfers withdraw for free?'
@@ -385,6 +391,9 @@ export function finalize(t: Tournament, status: TournamentStatus, registered: nu
     rounds,
     fees,
     team: team ? t.team : undefined,
+    // Sprint 5 · #189: the golfer limit always follows the team limit (teams × team size)
+    maxPlayers: team ? (t.registration!.maxTeams ?? 0) * t.team!.size : t.maxPlayers,
+    registration: { ...t.registration!, maxTeams: team ? t.registration!.maxTeams : undefined },
     scoring: {
       ...t.scoring!,
       basis: t.scoring!.usage === 'scratch' ? 'gross' : t.scoring!.basis,

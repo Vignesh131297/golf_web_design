@@ -1,3 +1,4 @@
+import { capacityLabel } from './capacity'
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import type { Official, Tournament } from './types'
 import { Button, Input, VerifiedTick } from './components'
@@ -7,8 +8,7 @@ import { getCourse } from './data'
 import { upsertTournament } from './store'
 import {
   PAYMENT_LABEL, ROUND_STATUS_CODE, ROUND_STATUS_LABEL, addEntry, cardFor, entriesFor, outcomesFor, pickupAllowed, type HoleOutcome, finishRoundForDemo, groupsFor, leaderboard, moveToGroup, roundHoles,
-  roundStatus, suspensionFor, teamSizeOf, teeSetIdFor, ticksFor, updateEntry, useLiveVersion, type Entry, type PaymentStatus, type RoundStatus,
-} from './live'
+  roundStatus, suspensionFor, teamSizeOf, teeSetIdFor, ticksFor, updateEntry, useLiveVersion, type Entry, type PaymentStatus, type RoundStatus, fieldCapacity } from './live'
 import { divisionForGolfer, formatClock, formatMoney, toPar, withTax } from './golf'
 import { ScoreCell } from './screens/Leaderboard'
 import {
@@ -1846,15 +1846,16 @@ export function FieldBoard({ t, round }: { t: Tournament; round: number }) {
   const [replacing, setReplacing] = useState<Entry | null>(null)
   const [adding, setAdding] = useState(false)
   const closed = t.status === 'completed' || t.status === 'cancelled'
-  const players = Math.max(t.players, field.length)
-  const full = players >= t.maxPlayers
+  // Sprint 5 · #190: registered teams and golfers come from the field, not a local tally
+  const cap = fieldCapacity(t)
+  const full = cap.full
 
   return (
-    <Panel flush title={`Field · ${players} / ${t.maxPlayers}`}
+    <Panel flush title={`Field · ${capacityLabel(cap)}`}
       subtitle="Register golfers yourself, remove or replace players, move them between groups, or change their tees. A player keeps the same tees once they’ve teed off."
       aside={!closed && (
         <span className="flex items-center gap-2">
-          {full && <span className="text-[12px] font-semibold text-rose-700">Field is full</span>}
+          {full && <span className="text-[12px] font-semibold text-rose-700">{cap.team ? 'Team capacity reached' : 'Field is full'}</span>}
           <Button size="sm" disabled={full} onClick={() => setAdding(true)}>Register a golfer</Button>
         </span>
       )}>
