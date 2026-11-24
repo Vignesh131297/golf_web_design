@@ -225,7 +225,7 @@ This matches the transcript ("pick up his ball at 7 … if he's playing 7th stro
 - **Set-up › Handicap & scoring › Worked example**: every hole of the course with strokes and pick-up point for handicap 12 and 18.
 
 ### To confirm with AJ 🔍
-1. **"Handicap 12"** — Handicap Index, course handicap or **playing handicap**? (On Augusta Pines Blue at 95%, HI 12.0 → playing 11.)
+1. **"Handicap 12"** — Handicap Index, course handicap or **playing handicap**? It matters: at 95% on Augusta Pines, a Handicap Index of 12.0 plays as **19** off Black, **18** off Blue and **12** off Red (an index of 18.0 plays as 27 / 25 / 19).
 2. Pick-up point = **net double bogey** (par + strokes + 2)? Or one stroke earlier — once no point is possible?
 3. Wording: "Please pick up your ball after double bogey" — show **before** the hole (as a hint) **and** when reached, or only when reached?
 4. Should the hint appear in **Stroke Play** too (as a maximum score), or Stableford only?
